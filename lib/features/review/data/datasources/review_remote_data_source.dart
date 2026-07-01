@@ -1,0 +1,267 @@
+import 'dart:math';
+
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../../../../shared/supabase/supabase_tables.dart';
+import '../../../quiz/data/models/question_model.dart';
+import '../../../quiz/domain/entities/question.dart';
+import '../../domain/entities/review_schedule.dart';
+import '../models/review_schedule_model.dart';
+
+class ReviewRemoteDataSource {
+  const ReviewRemoteDataSource(this._client);
+
+  final SupabaseClient _client;
+
+  Future<List<ReviewScheduleModel>> loadDueReviews() async {
+    final user = _client.auth.currentUser;
+    if (user == null) {
+      throw StateError('User session is required to load reviews.');
+    }
+
+    final now = DateTime.now().toUtc();
+    final schedules = await _client
+        .from(SupabaseTables.reviewSchedules)
+        .select('id,material_id,concept_id,memory_state_id,scheduled_at,memory_states!inner(memory_score,next_review_at)')
+        .eq('user_id', user.id)
+        .eq('status', 'scheduled')
+        .lte('scheduled_at', now.toIso8601String())
+        .lte('memory_states.next_review_at', now.toIso8601String())
+        .order('scheduled_at', ascending: true);
+
+    if (schedules.isEmpty) {
+      return const [];
+    }
+
+    final scheduleRows = schedules
+        .map((row) => Map<String, dynamic>.from(row as Map))
+        .toList(growable: false);
+    final materialIds = scheduleRows
+        .map((row) => row['material_id'].toString())
+        .toSet()
+        .toList(growable: false);
+
+    final questionRows = await _client
+        .from(SupabaseTables.questions)
+        .select('id,material_id,concept_id,section_id,type,question_text,options,answer,explanation,evidence,difficulty,order_index')
+        .eq('user_id', user.id)
+        .eq('initial_batch', true)
+        .inFilter('material_id', materialIds);
+
+    final questions = questionRows
+        .map((row) => QuestionModel.fromJson(Map<String, dynamic>.from(row as Map)))
+        .toList(growable: false);
+
+    final items = <ReviewScheduleModel>[];
+    for (final schedule in scheduleRows) {
+      final question = questions.where((candidate) {
+        return candidate.materialId == schedule['material_id'] &&
+            candidate.conceptId == schedule['concept_id'];
+      }).fold<QuestionModel?>(null, (current, candidate) {
+        if (current == null || candidate.orderIndex < current.orderIndex) {
+          return candidate;
+        }
+        return current;
+      });
+
+      if (question == null) {
+        continue;
+      }
+      items.add(ReviewScheduleModel.fromParts(schedule: schedule, question: question));
+    }
+
+    items.sort((a, b) {
+      final overdueCompare = a.scheduledAt.compareTo(b.scheduledAt);
+      if (overdueCompare != 0) {
+        return overdueCompare;
+      }
+      return a.memoryScore.compareTo(b.memoryScore);
+    });
+    return items;
+  }
+
+  Future<MemoryUpdate> completeReview({
+    required ReviewSchedule item,
+    required String selectedAnswer,
+    required bool isCorrect,
+    required int responseTimeMs,
+  }) async {
+    final user = _client.auth.currentUser;
+    if (user == null) {
+      throw StateError('User session is required to complete reviews.');
+    }
+
+    await _client.from(SupabaseTables.quizAttempts).insert({
+      'user_id': user.id,
+      'material_id': item.materialId,
+      'question_id': item.question.id,
+      'selected_answer': selectedAnswer,
+      'is_correct': isCorrect,
+      'response_time_ms': responseTimeMs,
+    });
+
+    await _client
+        .from(SupabaseTables.reviewSchedules)
+        .update({'status': 'completed'})
+        .eq('id', item.id)
+        .eq('user_id', user.id);
+
+    return _upsertMemoryState(
+      userId: user.id,
+      materialId: item.materialId,
+      conceptId: item.conceptId,
+      difficulty: item.question.difficulty,
+      isCorrect: isCorrect,
+      responseTimeMs: responseTimeMs,
+    );
+  }
+
+  Future<MemoryUpdate> _upsertMemoryState({
+    required String userId,
+    required String materialId,
+    required String conceptId,
+    required int difficulty,
+    required bool isCorrect,
+    required int responseTimeMs,
+  }) async {
+    final now = DateTime.now().toUtc();
+    final existing = await _client
+        .from(SupabaseTables.memoryStates)
+        .select('id,memory_score,last_reviewed_at')
+        .eq('user_id', userId)
+        .eq('material_id', materialId)
+        .eq('concept_id', conceptId)
+        .maybeSingle();
+
+    final previousMemoryScore = _doubleFrom(existing?['memory_score']);
+    final lastReviewedAt = _dateFrom(existing?['last_reviewed_at']);
+
+    final accuracy = isCorrect ? 1.0 : 0.0;
+    final responseTime = _responseTimeScore(responseTimeMs);
+    final difficultyScore = difficulty.clamp(1, 5).toDouble() / 5.0;
+    final forgettingCurve = _forgettingCurveScore(lastReviewedAt, now);
+    const confidence = 0.5;
+
+    final memoryScore = _clamp01(
+      accuracy * 0.35 +
+          responseTime * 0.15 +
+          difficultyScore * 0.15 +
+          forgettingCurve * 0.25 +
+          confidence * 0.10,
+    );
+    final nextReviewAt = _nextReviewAt(now, memoryScore);
+
+    final upserted = await _client
+        .from(SupabaseTables.memoryStates)
+        .upsert({
+          'user_id': userId,
+          'material_id': materialId,
+          'concept_id': conceptId,
+          'memory_score': memoryScore,
+          'accuracy_score': accuracy,
+          'response_time_score': responseTime,
+          'difficulty_score': difficultyScore,
+          'forgetting_curve_score': forgettingCurve,
+          'confidence_score': confidence,
+          'last_reviewed_at': now.toIso8601String(),
+          'next_review_at': nextReviewAt.toIso8601String(),
+          'updated_at': now.toIso8601String(),
+        }, onConflict: 'user_id,material_id,concept_id')
+        .select('id')
+        .single();
+
+    await _createOrUpdateScheduledReview(
+      userId: userId,
+      materialId: materialId,
+      conceptId: conceptId,
+      memoryStateId: upserted['id'].toString(),
+      scheduledAt: nextReviewAt,
+    );
+
+    return MemoryUpdate(
+      conceptId: conceptId,
+      previousMemoryScore: previousMemoryScore,
+      memoryScore: memoryScore,
+      nextReviewAt: nextReviewAt,
+    );
+  }
+
+  Future<void> _createOrUpdateScheduledReview({
+    required String userId,
+    required String materialId,
+    required String conceptId,
+    required String memoryStateId,
+    required DateTime scheduledAt,
+  }) async {
+    final existing = await _client
+        .from(SupabaseTables.reviewSchedules)
+        .select('id')
+        .eq('user_id', userId)
+        .eq('material_id', materialId)
+        .eq('concept_id', conceptId)
+        .eq('status', 'scheduled')
+        .maybeSingle();
+
+    final row = {
+      'user_id': userId,
+      'material_id': materialId,
+      'concept_id': conceptId,
+      'memory_state_id': memoryStateId,
+      'scheduled_at': scheduledAt.toIso8601String(),
+      'status': 'scheduled',
+    };
+
+    if (existing == null) {
+      await _client.from(SupabaseTables.reviewSchedules).insert(row);
+      return;
+    }
+
+    await _client
+        .from(SupabaseTables.reviewSchedules)
+        .update(row)
+        .eq('id', existing['id'])
+        .eq('user_id', userId);
+  }
+
+  double _responseTimeScore(int responseTimeMs) {
+    final seconds = max(0, responseTimeMs) / 1000.0;
+    return _clamp01(1 - (seconds / 30.0));
+  }
+
+  double _forgettingCurveScore(DateTime? lastReviewedAt, DateTime now) {
+    if (lastReviewedAt == null) {
+      return 1;
+    }
+    final hours = max(0, now.difference(lastReviewedAt).inMinutes) / 60.0;
+    return _clamp01(exp(-hours / 24.0));
+  }
+
+  DateTime _nextReviewAt(DateTime now, double memoryScore) {
+    if (memoryScore < 0.4) {
+      return now.add(const Duration(minutes: 10));
+    }
+    if (memoryScore < 0.6) {
+      return now.add(const Duration(days: 1));
+    }
+    if (memoryScore < 0.8) {
+      return now.add(const Duration(days: 3));
+    }
+    return now.add(const Duration(days: 7));
+  }
+
+  double _doubleFrom(Object? value) {
+    if (value is num) {
+      return value.toDouble();
+    }
+    return double.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  DateTime? _dateFrom(Object? value) {
+    if (value == null) {
+      return null;
+    }
+    return DateTime.tryParse(value.toString())?.toUtc();
+  }
+
+  double _clamp01(double value) => value.clamp(0, 1).toDouble();
+}
