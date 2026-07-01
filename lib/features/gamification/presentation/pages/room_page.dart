@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../shared/design_system/spacing/app_spacing.dart';
+import '../../../../shared/widgets/reward_feedback_overlay.dart';
 import '../../../streak/presentation/providers/streak_providers.dart';
 import '../../domain/entities/room_item.dart';
 import '../providers/gamification_providers.dart';
@@ -45,7 +46,7 @@ class RoomPage extends ConsumerWidget {
                   Text('M-Coin', style: Theme.of(context).textTheme.titleMedium),
                   Chip(
                     avatar: const Icon(Icons.toll, size: 18),
-                    label: Text('${room.walletBalance}'),
+                    label: RewardAnimatedValue(value: '${room.walletBalance}'),
                   ),
                 ],
               ),

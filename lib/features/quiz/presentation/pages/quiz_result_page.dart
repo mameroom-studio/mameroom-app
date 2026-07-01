@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../shared/widgets/reward_feedback_overlay.dart';
 import '../../../library/presentation/pages/library_page.dart';
 import '../providers/quiz_providers.dart';
 
@@ -57,14 +58,17 @@ class QuizResultPage extends ConsumerWidget {
                     _ResultTile(
                       label: 'Earned M-Coin',
                       value: '+${session.coinReward.earnedCoins}',
+                      animated: true,
                     ),
                     _ResultTile(
                       label: 'Total M-Coin',
                       value: '${session.coinReward.balance}',
+                      animated: true,
                     ),
                     _ResultTile(
                       label: 'Bonus M-Coin',
                       value: '+${session.coinReward.bonusCoins}',
+                      animated: true,
                     ),
                     const Spacer(),
                     FilledButton(
@@ -95,17 +99,27 @@ class QuizResultPage extends ConsumerWidget {
 }
 
 class _ResultTile extends StatelessWidget {
-  const _ResultTile({required this.label, required this.value});
+  const _ResultTile({
+    required this.label,
+    required this.value,
+    this.animated = false,
+  });
 
   final String label;
   final String value;
+  final bool animated;
 
   @override
   Widget build(BuildContext context) {
     return ListTile(
       contentPadding: EdgeInsets.zero,
       title: Text(label),
-      trailing: Text(value, style: Theme.of(context).textTheme.titleMedium),
+      trailing: animated
+          ? RewardAnimatedValue(
+              value: value,
+              style: Theme.of(context).textTheme.titleMedium,
+            )
+          : Text(value, style: Theme.of(context).textTheme.titleMedium),
     );
   }
 }

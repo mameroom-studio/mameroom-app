@@ -1,7 +1,8 @@
-import 'package:supabase_flutter/supabase_flutter.dart';
+﻿import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../shared/supabase/supabase_tables.dart';
 import '../../domain/entities/coin_wallet.dart';
+import '../../domain/policies/economy_policy.dart';
 
 class CoinRemoteDataSource {
   const CoinRemoteDataSource(this._client);
@@ -57,10 +58,10 @@ class CoinRemoteDataSource {
     for (final answer in answers.where((answer) => answer.isCorrect)) {
       summary = summary.combine(
         await _award(
-          amount: 1,
-          transactionType: 'correct_answer',
-          sourceType: 'quiz',
-          sourceId: answer.questionId,
+          EconomyPolicy.correctAnswer(
+            questionId: answer.questionId,
+            sourceType: EconomyPolicy.quizSource,
+          ),
         ),
       );
     }
@@ -68,32 +69,22 @@ class CoinRemoteDataSource {
     if (_hasFiveCorrectStreak(answers)) {
       summary = summary.combine(
         await _award(
-          amount: 2,
-          transactionType: 'streak_bonus',
-          sourceType: 'quiz',
-          sourceId: materialId,
+          EconomyPolicy.fiveCorrectStreak(
+            sourceType: EconomyPolicy.quizSource,
+            sourceId: materialId,
+          ),
         ),
       );
     }
 
     for (final change in memoryChanges.where((change) => change.increased)) {
       summary = summary.combine(
-        await _award(
-          amount: 50,
-          transactionType: 'memory_increase',
-          sourceType: 'memory',
-          sourceId: change.conceptId,
-        ),
+        await _award(EconomyPolicy.memoryIncrease(conceptId: change.conceptId)),
       );
     }
 
     summary = summary.combine(
-      await _award(
-        amount: 10,
-        transactionType: 'first_study',
-        sourceType: 'study',
-        sourceId: materialId,
-      ),
+      await _award(EconomyPolicy.firstStudy(materialId: materialId)),
     );
 
     return summary;
@@ -109,10 +100,10 @@ class CoinRemoteDataSource {
     for (final answer in answers.where((answer) => answer.isCorrect)) {
       summary = summary.combine(
         await _award(
-          amount: 1,
-          transactionType: 'correct_answer',
-          sourceType: 'review',
-          sourceId: answer.questionId,
+          EconomyPolicy.correctAnswer(
+            questionId: answer.questionId,
+            sourceType: EconomyPolicy.reviewSource,
+          ),
         ),
       );
     }
@@ -120,48 +111,36 @@ class CoinRemoteDataSource {
     if (_hasFiveCorrectStreak(answers)) {
       summary = summary.combine(
         await _award(
-          amount: 2,
-          transactionType: 'streak_bonus',
-          sourceType: 'review',
-          sourceId: reviewSessionId,
+          EconomyPolicy.fiveCorrectStreak(
+            sourceType: EconomyPolicy.reviewSource,
+            sourceId: reviewSessionId,
+          ),
         ),
       );
     }
 
     for (final change in memoryChanges.where((change) => change.increased)) {
       summary = summary.combine(
-        await _award(
-          amount: 50,
-          transactionType: 'memory_increase',
-          sourceType: 'memory',
-          sourceId: change.conceptId,
-        ),
+        await _award(EconomyPolicy.memoryIncrease(conceptId: change.conceptId)),
       );
     }
 
     summary = summary.combine(
-      await _award(
-        amount: 20,
-        transactionType: 'review_complete',
-        sourceType: 'review',
-        sourceId: reviewSessionId,
-      ),
+      await _award(EconomyPolicy.reviewComplete(reviewSessionId: reviewSessionId)),
     );
 
     return summary;
   }
 
-  Future<CoinRewardSummary> _award({
-    required int amount,
-    required String transactionType,
-    required String sourceType,
-    required String sourceId,
-  }) async {
+  Future<CoinRewardSummary> _award(CoinAwardPolicy policy) async {
     final result = await _client.rpc('award_m_coin', params: {
-      'p_amount': amount,
-      'p_transaction_type': transactionType,
-      'p_source_type': sourceType,
-      'p_source_id': sourceId,
+      'p_amount': policy.amount,
+      'p_transaction_type': policy.transactionType,
+      'p_source_type': policy.sourceType,
+      'p_source_id': policy.sourceId,
+      'p_reason': policy.reason,
+      'p_reference_id': policy.sourceId,
+      'p_idempotency_key': policy.idempotencyKey,
     });
 
     final row = result is List && result.isNotEmpty

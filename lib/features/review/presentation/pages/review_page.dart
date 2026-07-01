@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../shared/widgets/reward_feedback_overlay.dart';
+import '../../../coins/domain/policies/economy_policy.dart';
 import '../../../library/presentation/pages/library_page.dart';
+import '../../../streak/presentation/providers/streak_providers.dart';
 import '../../../quiz/domain/entities/question.dart';
 import '../../domain/entities/review_schedule.dart';
 import '../providers/review_providers.dart';
@@ -19,6 +22,8 @@ class ReviewPage extends ConsumerStatefulWidget {
 class _ReviewPageState extends ConsumerState<ReviewPage> {
   final _textController = TextEditingController();
   bool _isFinished = false;
+  List<String> _rewardMessages = const [];
+  int _rewardTrigger = 0;
 
   @override
   void initState() {
@@ -59,9 +64,13 @@ class _ReviewPageState extends ConsumerState<ReviewPage> {
     }
 
     if (_isFinished) {
-      return _ReviewComplete(
-        session: session,
-        onBack: () => context.go(LibraryPage.routePath),
+      return RewardFeedbackOverlay(
+        messages: _rewardMessages,
+        trigger: _rewardTrigger,
+        child: _ReviewComplete(
+          session: session,
+          onBack: () => context.go(LibraryPage.routePath),
+        ),
       );
     }
 
@@ -79,9 +88,12 @@ class _ReviewPageState extends ConsumerState<ReviewPage> {
       );
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
+    return RewardFeedbackOverlay(
+      messages: _rewardMessages,
+      trigger: _rewardTrigger,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -123,12 +135,21 @@ class _ReviewPageState extends ConsumerState<ReviewPage> {
               ? () async {
                   if (!session.isAnswerChecked) {
                     await ref.read(reviewControllerProvider.notifier).checkAnswer();
+                    final updated = ref.read(reviewControllerProvider).asData?.value;
+                    if (mounted && updated != null) {
+                      _showRewardFeedback(_reviewRewardMessages(updated));
+                    }
                     return;
                   }
                   if (session.isLastQuestion) {
                     await ref.read(reviewControllerProvider.notifier).awardCompletionRewards();
+                    final streak = await ref.refresh(streakProvider.future);
                     if (mounted) {
                       setState(() => _isFinished = true);
+                      _showRewardFeedback([
+                        '+${EconomyPolicy.reviewCompletionCoins} M-Coin',
+                        if (streak.currentStreak > 0) '?? ${streak.currentStreak}? ?? ??',
+                      ]);
                     }
                   } else {
                     _textController.clear();
@@ -138,8 +159,46 @@ class _ReviewPageState extends ConsumerState<ReviewPage> {
               : null,
           child: Text(_buttonText(session)),
         ),
-      ],
+        ],
+      ),
     );
+  }
+
+  void _showRewardFeedback(List<String> messages) {
+    if (messages.isEmpty) {
+      return;
+    }
+    setState(() {
+      _rewardMessages = messages;
+      _rewardTrigger += 1;
+    });
+  }
+
+  List<String> _reviewRewardMessages(ReviewSessionState session) {
+    final answer = session.currentAnswer;
+    final messages = <String>[];
+    if (answer?.isCorrect == true) {
+      messages.add('+${EconomyPolicy.correctAnswerCoins} M-Coin');
+      if (_hasFiveCorrectStreak(session.answers)) {
+        messages.add('?? 5 Combo!');
+      }
+    }
+
+    if (session.memoryUpdates.isNotEmpty) {
+      final delta = session.memoryUpdates.last.delta;
+      final percent = (delta * 100).round();
+      if (percent > 0) {
+        messages.add('+$percent% Memory');
+      }
+    }
+    return messages;
+  }
+
+  bool _hasFiveCorrectStreak(List<ReviewAnswerResult> answers) {
+    if (answers.length < 5) {
+      return false;
+    }
+    return answers.reversed.take(5).every((answer) => answer.isCorrect);
   }
 
   bool _buttonEnabled(ReviewSessionState session) {
@@ -276,9 +335,9 @@ class _ReviewComplete extends StatelessWidget {
         _ResultRow(label: 'Accuracy', value: '${(summary.accuracy * 100).round()}%'),
         _ResultRow(label: 'Next review', value: _formatReviewTime(session.nextReviewAt)),
         const Divider(height: 32),
-        _ResultRow(label: 'Earned M-Coin', value: '+${session.coinReward.earnedCoins}'),
-        _ResultRow(label: 'Total M-Coin', value: '${session.coinReward.balance}'),
-        _ResultRow(label: 'Bonus M-Coin', value: '+${session.coinReward.bonusCoins}'),
+        _ResultRow(label: 'Earned M-Coin', value: '+${session.coinReward.earnedCoins}', animated: true),
+        _ResultRow(label: 'Total M-Coin', value: '${session.coinReward.balance}', animated: true),
+        _ResultRow(label: 'Bonus M-Coin', value: '+${session.coinReward.bonusCoins}', animated: true),
         const Spacer(),
         FilledButton(onPressed: onBack, child: const Text('Back to library')),
       ],
@@ -297,17 +356,27 @@ class _ReviewComplete extends StatelessWidget {
 }
 
 class _ResultRow extends StatelessWidget {
-  const _ResultRow({required this.label, required this.value});
+  const _ResultRow({
+    required this.label,
+    required this.value,
+    this.animated = false,
+  });
 
   final String label;
   final String value;
+  final bool animated;
 
   @override
   Widget build(BuildContext context) {
     return ListTile(
       contentPadding: EdgeInsets.zero,
       title: Text(label),
-      trailing: Text(value, style: Theme.of(context).textTheme.titleMedium),
+      trailing: animated
+          ? RewardAnimatedValue(
+              value: value,
+              style: Theme.of(context).textTheme.titleMedium,
+            )
+          : Text(value, style: Theme.of(context).textTheme.titleMedium),
     );
   }
 }

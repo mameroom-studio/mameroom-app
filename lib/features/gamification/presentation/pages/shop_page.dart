@@ -1,17 +1,27 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../shared/design_system/spacing/app_spacing.dart';
+import '../../../../shared/widgets/reward_feedback_overlay.dart';
 import '../../domain/entities/room_item.dart';
 import '../providers/gamification_providers.dart';
 
-class ShopPage extends ConsumerWidget {
+class ShopPage extends ConsumerStatefulWidget {
   const ShopPage({super.key});
 
   static const routePath = '/room/shop';
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ShopPage> createState() => _ShopPageState();
+}
+
+class _ShopPageState extends ConsumerState<ShopPage> {
+  List<String> _rewardMessages = const [];
+  int _rewardTrigger = 0;
+  String? _highlightedItemId;
+
+  @override
+  Widget build(BuildContext context) {
     final state = ref.watch(myRoomControllerProvider);
 
     return Scaffold(
@@ -23,44 +33,54 @@ class ShopPage extends ConsumerWidget {
             message: error.toString(),
             onRetry: () => ref.read(myRoomControllerProvider.notifier).load(),
           ),
-          data: (room) => ListView(
-            padding: const EdgeInsets.all(AppSpacing.lg),
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('M-Coin', style: Theme.of(context).textTheme.titleMedium),
-                  Chip(
-                    avatar: const Icon(Icons.toll, size: 18),
-                    label: Text('${room.walletBalance}'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              ...room.shopItems.map(
-                (item) => _ShopItemTile(
-                  item: item,
-                  owned: room.owns(item.id),
-                  canAfford: room.walletBalance >= item.price,
-                  onBuy: () async {
-                    try {
-                      await ref.read(myRoomControllerProvider.notifier).purchase(item);
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('${item.name} purchased.')),
-                        );
-                      }
-                    } catch (error) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(error.toString())),
-                        );
-                      }
-                    }
-                  },
+          data: (room) => RewardFeedbackOverlay(
+            messages: _rewardMessages,
+            trigger: _rewardTrigger,
+            child: ListView(
+              padding: const EdgeInsets.all(AppSpacing.lg),
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('M-Coin', style: Theme.of(context).textTheme.titleMedium),
+                    Chip(
+                      avatar: const Icon(Icons.toll, size: 18),
+                      label: RewardAnimatedValue(value: '${room.walletBalance}'),
+                    ),
+                  ],
                 ),
-              ),
-            ],
+                const SizedBox(height: AppSpacing.lg),
+                ...room.shopItems.map(
+                  (item) => _ShopItemTile(
+                    item: item,
+                    owned: room.owns(item.id),
+                    canAfford: room.walletBalance >= item.price,
+                    highlighted: _highlightedItemId == item.id,
+                    onBuy: () async {
+                      try {
+                        await ref.read(myRoomControllerProvider.notifier).purchase(item);
+                        if (context.mounted) {
+                          setState(() {
+                            _highlightedItemId = item.id;
+                            _rewardMessages = ['구매 완료', item.name];
+                            _rewardTrigger += 1;
+                          });
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('${item.name} purchased.')),
+                          );
+                        }
+                      } catch (error) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text(error.toString())),
+                          );
+                        }
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -73,31 +93,51 @@ class _ShopItemTile extends StatelessWidget {
     required this.item,
     required this.owned,
     required this.canAfford,
+    required this.highlighted,
     required this.onBuy,
   });
 
   final RoomItem item;
   final bool owned;
   final bool canAfford;
+  final bool highlighted;
   final VoidCallback onBuy;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surface,
-          border: Border.all(color: Colors.black12),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: ListTile(
-          leading: _ShopIcon(type: item.itemType),
-          title: Text(item.name),
-          subtitle: Text('${item.price} M-Coin'),
-          trailing: FilledButton(
-            onPressed: owned || !canAfford ? null : onBuy,
-            child: Text(owned ? 'Owned' : 'Buy'),
+    return TweenAnimationBuilder<double>(
+      key: ValueKey('${item.id}-$highlighted'),
+      tween: Tween<double>(begin: highlighted ? 0.94 : 1, end: 1),
+      duration: const Duration(milliseconds: 720),
+      curve: Curves.elasticOut,
+      builder: (context, scale, child) {
+        return Transform.scale(scale: scale, child: child);
+      },
+      child: AnimatedOpacity(
+        opacity: highlighted ? 0.92 : 1,
+        duration: const Duration(milliseconds: 180),
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              border: Border.all(
+                color: highlighted
+                    ? Theme.of(context).colorScheme.primary
+                    : Colors.black12,
+                width: highlighted ? 2 : 1,
+              ),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: ListTile(
+              leading: _ShopIcon(type: item.itemType),
+              title: Text(item.name),
+              subtitle: Text('${item.price} M-Coin'),
+              trailing: FilledButton(
+                onPressed: owned || !canAfford ? null : onBuy,
+                child: Text(owned ? 'Owned' : 'Buy'),
+              ),
+            ),
           ),
         ),
       ),

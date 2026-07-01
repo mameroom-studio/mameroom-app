@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../shared/widgets/reward_feedback_overlay.dart';
+import '../../../coins/domain/policies/economy_policy.dart';
 import '../../../library/presentation/pages/library_page.dart';
 import '../../domain/entities/question.dart';
 import '../providers/quiz_providers.dart';
@@ -20,6 +22,8 @@ class QuizPage extends ConsumerStatefulWidget {
 
 class _QuizPageState extends ConsumerState<QuizPage> {
   final _textController = TextEditingController();
+  List<String> _rewardMessages = const [];
+  int _rewardTrigger = 0;
 
   @override
   void initState() {
@@ -73,9 +77,12 @@ class _QuizPageState extends ConsumerState<QuizPage> {
       );
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
+    return RewardFeedbackOverlay(
+      messages: _rewardMessages,
+      trigger: _rewardTrigger,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
         Text(
           'Question ${session.currentIndex + 1} / ${session.questions.length}',
           style: Theme.of(context).textTheme.labelLarge,
@@ -113,6 +120,10 @@ class _QuizPageState extends ConsumerState<QuizPage> {
               ? () async {
                   if (!session.isAnswerChecked) {
                     await ref.read(quizControllerProvider.notifier).checkAnswer();
+                    final updated = ref.read(quizControllerProvider).asData?.value;
+                    if (mounted && updated != null) {
+                      _showRewardFeedback(_quizRewardMessages(updated));
+                    }
                     return;
                   }
                   if (session.isLastQuestion) {
@@ -128,8 +139,46 @@ class _QuizPageState extends ConsumerState<QuizPage> {
               : null,
           child: Text(_buttonText(session)),
         ),
-      ],
+        ],
+      ),
     );
+  }
+
+  void _showRewardFeedback(List<String> messages) {
+    if (messages.isEmpty) {
+      return;
+    }
+    setState(() {
+      _rewardMessages = messages;
+      _rewardTrigger += 1;
+    });
+  }
+
+  List<String> _quizRewardMessages(QuizSessionState session) {
+    final answer = session.currentAnswer;
+    final messages = <String>[];
+    if (answer?.isCorrect == true) {
+      messages.add('+${EconomyPolicy.correctAnswerCoins} M-Coin');
+      if (_hasFiveCorrectStreak(session.answers)) {
+        messages.add('?? 5 Combo!');
+      }
+    }
+
+    if (session.memoryUpdates.isNotEmpty) {
+      final delta = session.memoryUpdates.last.delta;
+      final percent = (delta * 100).round();
+      if (percent > 0) {
+        messages.add('+$percent% Memory');
+      }
+    }
+    return messages;
+  }
+
+  bool _hasFiveCorrectStreak(List<QuizAnswerResult> answers) {
+    if (answers.length < 5) {
+      return false;
+    }
+    return answers.reversed.take(5).every((answer) => answer.isCorrect);
   }
 
   bool _buttonEnabled(QuizSessionState session) {
