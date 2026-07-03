@@ -1,9 +1,12 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../../shared/design_system/spacing/app_spacing.dart';
+import '../../../../shared/design_system/theme/mameroom_theme_extension.dart';
+import '../../../../shared/widgets/mameroom_shell.dart';
+import '../../../../shared/widgets/pixel_placeholders.dart';
 import '../../../../shared/widgets/reward_feedback_overlay.dart';
+import '../../../library/presentation/pages/library_page.dart';
 import '../../../streak/presentation/providers/streak_providers.dart';
 import '../../domain/entities/room_item.dart';
 import '../providers/gamification_providers.dart';
@@ -19,126 +22,33 @@ class RoomPage extends ConsumerWidget {
     final state = ref.watch(myRoomControllerProvider);
     final streak = ref.watch(streakProvider).asData?.value;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('My Room'),
-        actions: [
-          TextButton.icon(
-            onPressed: () => context.push(ShopPage.routePath),
-            icon: const Icon(Icons.storefront),
-            label: const Text('Shop'),
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: state.when(
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (error, _) => _ErrorView(
-            message: error.toString(),
-            onRetry: () => ref.read(myRoomControllerProvider.notifier).load(),
-          ),
-          data: (room) => ListView(
-            padding: const EdgeInsets.all(AppSpacing.lg),
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('M-Coin', style: Theme.of(context).textTheme.titleMedium),
-                  Chip(
-                    avatar: const Icon(Icons.toll, size: 18),
-                    label: RewardAnimatedValue(value: '${room.walletBalance}'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.md),
-              _RoomCanvas(
-                room: room,
-                currentStreak: streak?.currentStreak ?? 0,
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              Text('Owned items', style: Theme.of(context).textTheme.titleMedium),
-              const SizedBox(height: AppSpacing.sm),
-              if (room.ownedItems.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: AppSpacing.md),
-                  child: Text('No items yet.'),
-                )
-              else
-                ...room.ownedItems.map(
-                  (item) => _OwnedItemTile(
-                    item: item,
-                    isPlaced: room.layouts.any((layout) => layout.item.id == item.id),
-                    onPlace: () async {
-                      try {
-                        await ref.read(myRoomControllerProvider.notifier).place(item);
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Item placed.')),
-                          );
-                        }
-                      } catch (error) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text(error.toString())),
-                          );
-                        }
-                      }
-                    },
-                  ),
-                ),
-            ],
-          ),
+    return MameroomShell(
+      showSparkles: false,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      child: state.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (error, _) => _ErrorView(
+          message: error.toString(),
+          onRetry: () => ref.read(myRoomControllerProvider.notifier).load(),
         ),
-      ),
-    );
-  }
-}
-
-class _RoomCanvas extends StatelessWidget {
-  const _RoomCanvas({required this.room, required this.currentStreak});
-
-  final MyRoomState room;
-  final int currentStreak;
-
-  @override
-  Widget build(BuildContext context) {
-    return AspectRatio(
-      aspectRatio: 1.2,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border.all(color: Colors.black12),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            return Stack(
-              children: [
-                Align(
-                  alignment: Alignment.bottomCenter,
-                  child: Container(
-                    height: constraints.maxHeight * 0.36,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFE9DCC8),
-                      border: Border(top: BorderSide(color: Colors.black12)),
-                    ),
-                  ),
-                ),
-                const Positioned(left: 26, top: 22, child: _Window()),
-                ...room.layouts.map((layout) {
-                  return Positioned(
-                    left: constraints.maxWidth * layout.positionX - 34,
-                    top: constraints.maxHeight * layout.positionY - 34,
-                    child: _PixelItem(item: layout.item),
-                  );
-                }),
-                Positioned(
-                  left: constraints.maxWidth * 0.46,
-                  top: constraints.maxHeight * 0.40,
-                  child: _PixelCharacter(currentStreak: currentStreak),
-                ),
-              ],
-            );
+        data: (room) => _RoomContent(
+          room: room,
+          currentStreak: streak?.currentStreak ?? 0,
+          onPlace: (item) async {
+            try {
+              await ref.read(myRoomControllerProvider.notifier).place(item);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('아이템을 방에 배치했어요.')),
+                );
+              }
+            } catch (error) {
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(error.toString())),
+                );
+              }
+            }
           },
         ),
       ),
@@ -146,147 +56,159 @@ class _RoomCanvas extends StatelessWidget {
   }
 }
 
-class _PixelCharacter extends StatelessWidget {
-  const _PixelCharacter({required this.currentStreak});
+class _RoomContent extends StatelessWidget {
+  const _RoomContent({
+    required this.room,
+    required this.currentStreak,
+    required this.onPlace,
+  });
 
+  final MyRoomState room;
   final int currentStreak;
+  final ValueChanged<RoomItem> onPlace;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 76,
-      height: 116,
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFF3BF),
-              border: Border.all(color: const Color(0xFFFF922B), width: 2),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.local_fire_department, size: 14, color: Color(0xFFE8590C)),
-                const SizedBox(width: 2),
-                Text('$currentStreak', style: Theme.of(context).textTheme.labelSmall),
-              ],
-            ),
-          ),
-          const SizedBox(height: 4),
-          Container(width: 28, height: 28, color: const Color(0xFFFFD8B8)),
-          Container(width: 38, height: 28, color: Colors.white),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(width: 16, height: 26, color: Colors.white),
-              const SizedBox(width: 4),
-              Container(width: 16, height: 26, color: Colors.white),
-            ],
-          ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(width: 12, height: 6, color: Colors.black87),
-              const SizedBox(width: 10),
-              Container(width: 12, height: 6, color: Colors.black87),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PixelItem extends StatelessWidget {
-  const _PixelItem({required this.item});
-
-  final RoomItem item;
-
-  @override
-  Widget build(BuildContext context) {
-    return switch (item.itemType) {
-      'desk' => _BlockIcon(color: const Color(0xFF8B5E3C), label: 'Desk'),
-      'chair' => _BlockIcon(color: const Color(0xFF5C7CFA), label: 'Chair'),
-      'plant' => _BlockIcon(color: const Color(0xFF2F9E44), label: 'Plant'),
-      'lamp' => _BlockIcon(color: const Color(0xFFFFC857), label: 'Lamp'),
-      _ => _BlockIcon(color: Colors.grey, label: item.name),
-    };
-  }
-}
-
-class _BlockIcon extends StatelessWidget {
-  const _BlockIcon({required this.color, required this.label});
-
-  final Color color;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
+    final colors = context.mameroom;
     return Column(
-      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Container(
-          width: 58,
-          height: 42,
-          decoration: BoxDecoration(
-            color: color,
-            border: Border.all(color: Colors.black87, width: 2),
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: colors.paper,
+                border: Border.all(color: colors.line),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.monetization_on, color: colors.sun, size: 20),
+                  const SizedBox(width: 6),
+                  RewardAnimatedValue(value: '${room.walletBalance}'),
+                ],
+              ),
+            ),
+            const Spacer(),
+            if (currentStreak > 0)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: colors.sun.withValues(alpha: 0.22),
+                  border: Border.all(color: colors.sun),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text('🔥 $currentStreak일', style: Theme.of(context).textTheme.labelLarge),
+              ),
+            IconButton(
+              tooltip: '상점',
+              onPressed: () => context.push(ShopPage.routePath),
+              icon: const Icon(Icons.storefront_outlined),
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        Expanded(
+          child: Center(
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  PixelRoomScene(streak: currentStreak > 0 ? currentStreak : null),
+                  const SizedBox(height: 18),
+                  Text(
+                    '환영해요! 🎉\n나만의 방이 완성되었어요!',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '이제 공부하고 기억씨앗을 성장시켜봐요.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  if (room.ownedItems.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    _OwnedItemsStrip(room: room, onPlace: onPlace),
+                  ],
+                ],
+              ),
+            ),
           ),
         ),
-        const SizedBox(height: 2),
-        Text(label, style: Theme.of(context).textTheme.labelSmall),
+        const SizedBox(height: 18),
+        MameroomPrimaryButton(
+          label: '마메룸 시작하기',
+          onPressed: () => context.go(LibraryPage.routePath),
+        ),
       ],
     );
   }
 }
 
-class _Window extends StatelessWidget {
-  const _Window();
+class _OwnedItemsStrip extends StatelessWidget {
+  const _OwnedItemsStrip({required this.room, required this.onPlace});
+
+  final MyRoomState room;
+  final ValueChanged<RoomItem> onPlace;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 68,
-      height: 48,
-      decoration: BoxDecoration(
-        color: const Color(0xFFD7F2FF),
-        border: Border.all(color: Colors.black26, width: 2),
-      ),
-      child: const Column(
-        children: [
-          Expanded(child: SizedBox()),
-          Divider(height: 1, color: Colors.black26),
-          Expanded(child: SizedBox()),
-        ],
+    final colors = context.mameroom;
+    return SizedBox(
+      height: 96,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: room.ownedItems.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 10),
+        itemBuilder: (context, index) {
+          final item = room.ownedItems[index];
+          final isPlaced = room.layouts.any((layout) => layout.item.id == item.id);
+          return InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => onPlace(item),
+            child: Container(
+              width: 88,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: isPlaced ? colors.primaryMist.withValues(alpha: 0.28) : colors.paper,
+                border: Border.all(color: isPlaced ? colors.primary : colors.line),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(_iconFor(item.itemType), color: colors.primary, size: 24),
+                  const SizedBox(height: 6),
+                  Text(
+                    item.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                  Text(
+                    isPlaced ? '배치됨' : '배치',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(color: colors.muted),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }
-}
 
-class _OwnedItemTile extends StatelessWidget {
-  const _OwnedItemTile({
-    required this.item,
-    required this.isPlaced,
-    required this.onPlace,
-  });
-
-  final RoomItem item;
-  final bool isPlaced;
-  final VoidCallback onPlace;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: _PixelItem(item: item),
-      title: Text(item.name),
-      subtitle: Text(isPlaced ? 'Placed' : 'Not placed'),
-      trailing: FilledButton(
-        onPressed: onPlace,
-        child: Text(isPlaced ? 'Move' : 'Place'),
-      ),
-    );
+  IconData _iconFor(String type) {
+    return switch (type) {
+      'desk' => Icons.table_bar_outlined,
+      'chair' => Icons.chair_outlined,
+      'plant' => Icons.local_florist_outlined,
+      'lamp' => Icons.light_outlined,
+      _ => Icons.widgets_outlined,
+    };
   }
 }
 
@@ -302,9 +224,13 @@ class _ErrorView extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(message, textAlign: TextAlign.center),
-          const SizedBox(height: 12),
-          FilledButton(onPressed: onRetry, child: const Text('Retry')),
+          const PixelSeed(size: 58),
+          const SizedBox(height: 18),
+          Text('방 정보를 불러오지 못했어요', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 8),
+          Text(message, textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium),
+          const SizedBox(height: 18),
+          MameroomPrimaryButton(label: '다시 시도', onPressed: onRetry),
         ],
       ),
     );

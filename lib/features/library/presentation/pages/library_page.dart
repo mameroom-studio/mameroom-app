@@ -2,18 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../../shared/design_system/colors/app_colors.dart';
-import '../../../../shared/design_system/spacing/app_spacing.dart';
-import '../../domain/entities/study_material.dart';
-import '../providers/library_mock_providers.dart';
+import '../../../../shared/design_system/theme/mameroom_theme_extension.dart';
+import '../../../../shared/widgets/mameroom_shell.dart';
+import '../../../../shared/widgets/pixel_placeholders.dart';
 import '../../../auth/presentation/pages/login_page.dart';
 import '../../../auth/presentation/providers/auth_controller.dart';
 import '../../../auth/presentation/providers/auth_providers.dart';
-import '../../../upload/presentation/pages/upload_page.dart';
-import '../../../review/presentation/pages/review_page.dart';
 import '../../../coins/presentation/providers/coin_providers.dart';
 import '../../../gamification/presentation/pages/room_page.dart';
+import '../../../quiz/presentation/pages/quiz_page.dart';
+import '../../../review/presentation/pages/review_page.dart';
 import '../../../streak/presentation/providers/streak_providers.dart';
+import '../../../upload/presentation/pages/upload_page.dart';
+import '../../domain/entities/study_material.dart';
+import '../providers/library_mock_providers.dart';
 
 class LibraryPage extends ConsumerWidget {
   const LibraryPage({super.key});
@@ -24,257 +26,280 @@ class LibraryPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     ref.listen<AuthFormState>(authControllerProvider, (previous, next) {
       final message = next.errorMessage ?? next.infoMessage;
-      if (message == null || message == previous?.errorMessage ||
-          message == previous?.infoMessage) {
+      if (message == null || message == previous?.errorMessage || message == previous?.infoMessage) {
         return;
       }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
       ref.read(authControllerProvider.notifier).clearMessages();
     });
 
-    final dashboard = ref.watch(libraryDashboardProvider);
+    final dashboardState = ref.watch(libraryDashboardProvider);
     final currentUser = ref.watch(currentUserProvider).asData?.value;
-    final isAuthLoading = ref.watch(authControllerProvider).isLoading;
+    final authState = ref.watch(authControllerProvider);
     final wallet = ref.watch(coinWalletProvider);
     final streak = ref.watch(streakProvider);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Library'),
-        actions: [
-          TextButton(
-            onPressed: isAuthLoading
-                ? null
-                : () async {
-                    try {
-                      await ref.read(authControllerProvider.notifier).signOut();
-                      if (context.mounted) {
-                        context.go(LoginPage.routePath);
-                      }
-                    } catch (_) {
-                      // Error state is exposed by authControllerProvider.
+    return MameroomShell(
+      showSparkles: false,
+      padding: EdgeInsets.zero,
+      child: dashboardState.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (error, _) => _LibraryError(message: error.toString()),
+        data: (dashboard) {
+          final walletBalance = wallet.maybeWhen(data: (value) => value.balance, orElse: () => 0);
+          final todayEarned = wallet.maybeWhen(data: (value) => value.todayEarned, orElse: () => 0);
+          final currentStreak = streak.maybeWhen(data: (value) => value.currentStreak, orElse: () => 0);
+          final maxStreak = streak.maybeWhen(data: (value) => value.maxStreak, orElse: () => 0);
+
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+            children: [
+              _HomeHeader(
+                email: currentUser?.email,
+                isLoading: authState.isLoading,
+                onSignOut: () async {
+                  try {
+                    await ref.read(authControllerProvider.notifier).signOut();
+                    if (context.mounted) {
+                      context.go(LoginPage.routePath);
                     }
-                  },
-            child: isAuthLoading
-                ? const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('Sign out'),
+                  } catch (_) {
+                    // Error state is exposed by authControllerProvider.
+                  }
+                },
+              ),
+              const SizedBox(height: 20),
+              _HeroRoomCard(
+                memoryPercent: dashboard.totalMemoryPercent,
+                reviewCount: dashboard.todayReviewCount,
+                currentStreak: currentStreak,
+              ),
+              const SizedBox(height: 16),
+              _MetricsGrid(
+                todayReviewCount: dashboard.todayReviewCount,
+                totalMemoryPercent: dashboard.totalMemoryPercent,
+                walletBalance: walletBalance,
+                todayEarned: todayEarned,
+                currentStreak: currentStreak,
+                maxStreak: maxStreak,
+              ),
+              const SizedBox(height: 18),
+              _PrimaryActions(
+                onReview: () => context.push(ReviewPage.routePath),
+                onRoom: () => context.push(RoomPage.routePath),
+                onUpload: () => context.push(UploadPage.routePath),
+              ),
+              const SizedBox(height: 26),
+              _SectionHeader(title: '내 공부 자료', trailing: '${dashboard.materials.length}'),
+              const SizedBox(height: 12),
+              if (dashboard.materials.isEmpty)
+                _EmptyMaterials(onUpload: () => context.push(UploadPage.routePath))
+              else
+                ...dashboard.materials.map((material) => _MaterialCard(material: material)),
+              const SizedBox(height: 24),
+              const _SectionHeader(title: '최근 학습 기록'),
+              const SizedBox(height: 12),
+              if (dashboard.recentRecords.isEmpty)
+                const _EmptyRecentRecords()
+              else
+                ...dashboard.recentRecords.map(_RecentRecordTile.new),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _HomeHeader extends StatelessWidget {
+  const _HomeHeader({required this.email, required this.isLoading, required this.onSignOut});
+
+  final String? email;
+  final bool isLoading;
+  final VoidCallback onSignOut;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.mameroom;
+    return Row(
+      children: [
+        const PixelSeed(size: 42),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('MAMEROOM', style: Theme.of(context).textTheme.titleLarge?.copyWith(letterSpacing: 1.1)),
+              Text(email ?? '오늘도 기억을 심어볼까요?', maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: colors.muted)),
+            ],
           ),
+        ),
+        TextButton(
+          onPressed: isLoading ? null : onSignOut,
+          child: isLoading
+              ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('로그아웃'),
+        ),
+      ],
+    );
+  }
+}
+
+class _HeroRoomCard extends StatelessWidget {
+  const _HeroRoomCard({required this.memoryPercent, required this.reviewCount, required this.currentStreak});
+
+  final int memoryPercent;
+  final int reviewCount;
+  final int currentStreak;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.mameroom;
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: colors.paper,
+        border: Border.all(color: colors.line),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(color: colors.primary.withValues(alpha: 0.10), blurRadius: 24, offset: const Offset(0, 12)),
         ],
       ),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(AppSpacing.lg),
-          children: [
-            _Header(email: currentUser?.email),
-            const SizedBox(height: AppSpacing.lg),
-            _SummaryRow(
-              todayReviewCount: dashboard.todayReviewCount,
-              totalMemoryPercent: dashboard.totalMemoryPercent,
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            wallet.when(
-              loading: () => const _CoinSummary(balance: '-', todayEarned: '-'),
-              error: (error, stackTrace) => const _CoinSummary(balance: '0', todayEarned: '0'),
-              data: (value) => _CoinSummary(
-                balance: '${value.balance}',
-                todayEarned: '+${value.todayEarned}',
-              ),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            streak.when(
-              loading: () => const _StreakSummary(current: '-', max: '-'),
-              error: (error, stackTrace) => const _StreakSummary(current: '0', max: '0'),
-              data: (value) => _StreakSummary(
-                current: '${value.currentStreak}',
-                max: '${value.maxStreak}',
-              ),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            Row(
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: () => context.push(ReviewPage.routePath),
-                    icon: const Icon(Icons.event_available),
-                    label: const Text('Review today'),
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.sm),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => context.push(RoomPage.routePath),
-                    icon: const Icon(Icons.meeting_room),
-                    label: const Text('My Room'),
+                Text('Ready to study', style: Theme.of(context).textTheme.headlineMedium),
+                const SizedBox(height: 8),
+                Text('오늘 복습 $reviewCount개 · 기억률 $memoryPercent% · $currentStreak일 연속', style: Theme.of(context).textTheme.bodyMedium),
+                const SizedBox(height: 18),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: LinearProgressIndicator(
+                    value: (memoryPercent / 100).clamp(0, 1),
+                    minHeight: 10,
+                    color: memoryPercent >= 80 ? colors.sun : colors.primary,
+                    backgroundColor: colors.primaryMist.withValues(alpha: 0.56),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: AppSpacing.sm),
-            OutlinedButton.icon(
-              onPressed: () => context.push(UploadPage.routePath),
-              icon: const Icon(Icons.upload_file),
-              label: const Text('Upload file'),
-            ),
-            const SizedBox(height: AppSpacing.xl),
-            _SectionHeader(
-              title: 'Study materials',
-              trailing: '${dashboard.materials.length}',
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            if (dashboard.materials.isEmpty)
-              const _EmptyMaterials()
-            else
-              ...dashboard.materials.map(_MaterialTile.new),
-            const SizedBox(height: AppSpacing.xl),
-            const _SectionHeader(title: 'Recent study'),
-            const SizedBox(height: AppSpacing.sm),
-            if (dashboard.recentRecords.isEmpty)
-              const _EmptyRecentRecords()
-            else
-              ...dashboard.recentRecords.map(_RecentRecordTile.new),
-          ],
-        ),
+          ),
+          const SizedBox(width: 14),
+          SizedBox(width: 104, child: PixelRoomScene(showFurniture: false, streak: currentStreak > 0 ? currentStreak : null)),
+        ],
       ),
     );
   }
 }
 
-class _Header extends StatelessWidget {
-  const _Header({required this.email});
-
-  final String? email;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Ready to study',
-          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-        ),
-        const SizedBox(height: AppSpacing.xs),
-        Text(
-          email ?? 'Signed in',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: AppColors.textSecondary,
-              ),
-        ),
-      ],
-    );
-  }
-}
-
-class _SummaryRow extends StatelessWidget {
-  const _SummaryRow({
+class _MetricsGrid extends StatelessWidget {
+  const _MetricsGrid({
     required this.todayReviewCount,
     required this.totalMemoryPercent,
+    required this.walletBalance,
+    required this.todayEarned,
+    required this.currentStreak,
+    required this.maxStreak,
   });
 
   final int todayReviewCount;
   final int totalMemoryPercent;
+  final int walletBalance;
+  final int todayEarned;
+  final int currentStreak;
+  final int maxStreak;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: _MetricTile(
-            label: 'Reviews today',
-            value: '$todayReviewCount',
-            icon: Icons.event_available,
-          ),
-        ),
-        const SizedBox(width: AppSpacing.sm),
-        Expanded(
-          child: _MetricTile(
-            label: 'Total memory',
-            value: '$totalMemoryPercent%',
-            icon: Icons.psychology_alt,
-          ),
-        ),
-      ],
+    final items = [
+      _MetricData(Icons.event_available_outlined, '$todayReviewCount', '오늘 복습'),
+      _MetricData(Icons.spa_outlined, '$totalMemoryPercent%', '총 기억률'),
+      _MetricData(Icons.monetization_on_outlined, '$walletBalance', 'M-Coin'),
+      _MetricData(Icons.add_circle_outline, '+$todayEarned', '오늘 획득'),
+      _MetricData(Icons.local_fire_department_outlined, '$currentStreak일', 'Streak'),
+      _MetricData(Icons.workspace_premium_outlined, '$maxStreak일', '최대 Streak'),
+    ];
+
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: items.length,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        mainAxisExtent: 126,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+      ),
+      itemBuilder: (context, index) => _MetricTile(data: items[index]),
     );
   }
 }
 
 class _MetricTile extends StatelessWidget {
-  const _MetricTile({
-    required this.label,
-    required this.value,
-    required this.icon,
-  });
+  const _MetricTile({required this.data});
 
-  final String label;
-  final String value;
-  final IconData icon;
+  final _MetricData data;
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
+    final colors = context.mameroom;
+    return Container(
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        border: Border.all(color: AppColors.border),
-        borderRadius: BorderRadius.circular(8),
+        color: colors.paper,
+        border: Border.all(color: colors.line),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [BoxShadow(color: colors.primary.withValues(alpha: 0.06), blurRadius: 16, offset: const Offset(0, 8))],
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(data.icon, color: colors.primary, size: 25),
+          const SizedBox(height: 12),
+          Text(data.value, style: Theme.of(context).textTheme.headlineMedium),
+          const SizedBox(height: 4),
+          Text(data.label, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: colors.muted)),
+        ],
+      ),
+    );
+  }
+}
+
+class _PrimaryActions extends StatelessWidget {
+  const _PrimaryActions({required this.onReview, required this.onRoom, required this.onUpload});
+
+  final VoidCallback onReview;
+  final VoidCallback onRoom;
+  final VoidCallback onUpload;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.mameroom;
+    return Column(
+      children: [
+        Row(
           children: [
-            Icon(icon, color: Theme.of(context).colorScheme.primary),
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              value,
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-            ),
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              label,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: AppColors.textSecondary,
-                  ),
-            ),
+            Expanded(child: _HomeButton(label: '오늘 복습', icon: Icons.event_available_outlined, onPressed: onReview, filled: true)),
+            const SizedBox(width: 10),
+            Expanded(child: _HomeButton(label: 'My Room', icon: Icons.meeting_room_outlined, onPressed: onRoom)),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _CoinSummary extends StatelessWidget {
-  const _CoinSummary({required this.balance, required this.todayEarned});
-
-  final String balance;
-  final String todayEarned;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: _MetricTile(
-            label: 'M-Coin balance',
-            value: balance,
-            icon: Icons.toll,
-          ),
-        ),
-        const SizedBox(width: AppSpacing.sm),
-        Expanded(
-          child: _MetricTile(
-            label: 'Earned today',
-            value: todayEarned,
-            icon: Icons.add_circle_outline,
+        const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: onUpload,
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(56),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              side: BorderSide(color: colors.line),
+            ),
+            icon: Icon(Icons.upload_file_outlined, color: colors.primary),
+            label: const Text('공부할 파일 업로드'),
           ),
         ),
       ],
@@ -282,32 +307,30 @@ class _CoinSummary extends StatelessWidget {
   }
 }
 
-class _StreakSummary extends StatelessWidget {
-  const _StreakSummary({required this.current, required this.max});
+class _HomeButton extends StatelessWidget {
+  const _HomeButton({required this.label, required this.icon, required this.onPressed, this.filled = false});
 
-  final String current;
-  final String max;
+  final String label;
+  final IconData icon;
+  final VoidCallback onPressed;
+  final bool filled;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: _MetricTile(
-            label: 'Streak',
-            value: '$current days',
-            icon: Icons.local_fire_department,
-          ),
-        ),
-        const SizedBox(width: AppSpacing.sm),
-        Expanded(
-          child: _MetricTile(
-            label: 'Max streak',
-            value: '$max days',
-            icon: Icons.workspace_premium,
-          ),
-        ),
-      ],
+    final shape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(16));
+    if (filled) {
+      return FilledButton.icon(
+        onPressed: onPressed,
+        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(56), shape: shape),
+        icon: Icon(icon),
+        label: Text(label),
+      );
+    }
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(56), shape: shape),
+      icon: Icon(icon),
+      label: Text(label),
     );
   }
 }
@@ -320,83 +343,167 @@ class _SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.mameroom;
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(
-          title,
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-        ),
-        if (trailing != null)
-          Text(
-            trailing!,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: AppColors.textSecondary,
-                ),
-          ),
+        Text(title, style: Theme.of(context).textTheme.titleLarge),
+        const Spacer(),
+        if (trailing != null) Text(trailing!, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: colors.muted)),
       ],
     );
   }
 }
 
-class _MaterialTile extends StatelessWidget {
-  const _MaterialTile(this.material);
+class _MaterialCard extends StatelessWidget {
+  const _MaterialCard({required this.material});
 
   final StudyMaterial material;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surface,
-          border: Border.all(color: AppColors.border),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.md),
-          child: Column(
+    final colors = context.mameroom;
+    final learnedText = material.totalQuestionCount == 0
+        ? '문제 생성 대기 중'
+        : '${material.completedQuestionCount}/${material.totalQuestionCount}문제 학습';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: colors.paper,
+        border: Border.all(color: colors.line),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [BoxShadow(color: colors.primary.withValues(alpha: 0.06), blurRadius: 16, offset: const Offset(0, 8))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  const Icon(Icons.description_outlined),
-                  const SizedBox(width: AppSpacing.sm),
-                  Expanded(
-                    child: Text(
-                      material.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                    ),
-                  ),
-                ],
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(color: colors.primaryMist.withValues(alpha: 0.36), borderRadius: BorderRadius.circular(14)),
+                child: Icon(Icons.description_outlined, color: colors.primary),
               ),
-              const SizedBox(height: AppSpacing.sm),
-              Text(
-                '${material.sectionCount} sections 쨌 next review ${material.nextReviewLabel}',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(material.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 4),
+                    Text(learnedText, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: colors.muted)),
+                  ],
+                ),
               ),
-              const SizedBox(height: AppSpacing.md),
-              LinearProgressIndicator(value: material.progressPercent / 100),
-              const SizedBox(height: AppSpacing.sm),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('Progress ${material.progressPercent}%'),
-                  Text('Memory ${material.memoryPercent}%'),
-                ],
-              ),
+              const SizedBox(width: 10),
+              Text(material.seedEmoji, style: const TextStyle(fontSize: 28)),
             ],
           ),
+          const SizedBox(height: 18),
+          _DashboardProgressLine(
+            label: '학습률',
+            valueLabel: '${material.progressPercent}%',
+            value: material.progressPercent / 100,
+            color: colors.primary,
+          ),
+          const SizedBox(height: 12),
+          _DashboardProgressLine(
+            label: '기억률',
+            valueLabel: '🧠 ${material.memoryPercent}%',
+            value: material.memoryPercent / 100,
+            color: material.memoryPercent >= 80 ? colors.sun : colors.seedGreen,
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _DashboardInfoChip(icon: Icons.event_available_outlined, label: '복습 예정 ${material.dueReviewCount}개'),
+              _DashboardInfoChip(icon: Icons.spa_outlined, label: '${material.seedEmoji} ${material.seedLabel}'),
+              _DashboardInfoChip(icon: Icons.schedule_outlined, label: '최근 학습 ${material.recentStudyLabel}'),
+              _DashboardInfoChip(icon: Icons.local_fire_department_outlined, label: '🔥 ${material.currentStreak}일'),
+            ],
+          ),
+          if (material.canStartQuiz) ...[
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: () => context.push('${QuizPage.routePath}?materialId=${material.id}'),
+                style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+                icon: const Icon(Icons.play_arrow_rounded),
+                label: const Text('퀴즈 시작'),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _DashboardProgressLine extends StatelessWidget {
+  const _DashboardProgressLine({required this.label, required this.valueLabel, required this.value, required this.color});
+
+  final String label;
+  final String valueLabel;
+  final double value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.mameroom;
+    final normalized = value.clamp(0.0, 1.0).toDouble();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(label, style: Theme.of(context).textTheme.labelLarge?.copyWith(color: colors.ink)),
+            const Spacer(),
+            Text(valueLabel, style: Theme.of(context).textTheme.labelLarge?.copyWith(color: colors.ink)),
+          ],
         ),
+        const SizedBox(height: 7),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(999),
+          child: LinearProgressIndicator(
+            value: normalized,
+            minHeight: 9,
+            color: color,
+            backgroundColor: colors.primaryMist.withValues(alpha: 0.45),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DashboardInfoChip extends StatelessWidget {
+  const _DashboardInfoChip({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.mameroom;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: colors.primaryMist.withValues(alpha: 0.22),
+        border: Border.all(color: colors.line),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: colors.primary),
+          const SizedBox(width: 6),
+          Text(label, style: Theme.of(context).textTheme.labelMedium?.copyWith(color: colors.ink)),
+        ],
       ),
     );
   }
@@ -409,38 +516,52 @@ class _RecentRecordTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: const CircleAvatar(child: Icon(Icons.check)),
-      title: Text(record.title),
-      subtitle: Text(record.subtitle),
-      trailing: Text(record.scoreLabel),
+    final colors = context.mameroom;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: colors.paper, border: Border.all(color: colors.line), borderRadius: BorderRadius.circular(18)),
+      child: Row(
+        children: [
+          Icon(Icons.check_circle_outline, color: colors.seedGreen),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(record.title, style: Theme.of(context).textTheme.titleSmall),
+                Text(record.subtitle, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: colors.muted)),
+              ],
+            ),
+          ),
+          Text(record.scoreLabel, style: Theme.of(context).textTheme.labelLarge),
+        ],
+      ),
     );
   }
 }
 
 class _EmptyMaterials extends StatelessWidget {
-  const _EmptyMaterials();
+  const _EmptyMaterials({required this.onUpload});
+
+  final VoidCallback onUpload;
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        border: Border.all(color: AppColors.border),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: const Padding(
-        padding: EdgeInsets.all(AppSpacing.lg),
-        child: Column(
-          children: [
-            Icon(Icons.folder_open, size: 40),
-            SizedBox(height: AppSpacing.sm),
-            Text('No study materials yet.'),
-            SizedBox(height: AppSpacing.xs),
-            Text('Upload a file to create your first quiz.'),
-          ],
-        ),
+    final colors = context.mameroom;
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(color: colors.paper, border: Border.all(color: colors.line), borderRadius: BorderRadius.circular(24)),
+      child: Column(
+        children: [
+          const PixelSeed(size: 62),
+          const SizedBox(height: 14),
+          Text('아직 공부 자료가 없어요', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 8),
+          Text('파일을 넣으면 AI가 퀴즈와 복습 일정을 만들어줘요.', textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium),
+          const SizedBox(height: 18),
+          _HomeButton(label: '파일 업로드', icon: Icons.upload_file_outlined, onPressed: onUpload, filled: true),
+        ],
       ),
     );
   }
@@ -451,9 +572,39 @@ class _EmptyRecentRecords extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: AppSpacing.md),
-      child: Text('No recent study records yet.'),
+    final colors = context.mameroom;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(color: colors.paper, border: Border.all(color: colors.line), borderRadius: BorderRadius.circular(18)),
+      child: Text('최근 학습 기록이 아직 없어요.', style: Theme.of(context).textTheme.bodyMedium),
     );
   }
+}
+
+class _LibraryError extends StatelessWidget {
+  const _LibraryError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Container(
+          padding: const EdgeInsets.all(22),
+          decoration: BoxDecoration(color: context.mameroom.paper, border: Border.all(color: context.mameroom.line), borderRadius: BorderRadius.circular(24)),
+          child: Text(message, textAlign: TextAlign.center),
+        ),
+      ),
+    );
+  }
+}
+
+class _MetricData {
+  const _MetricData(this.icon, this.value, this.label);
+
+  final IconData icon;
+  final String value;
+  final String label;
 }

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 enum UploadSourceType {
   pdf,
   image,
@@ -12,6 +14,7 @@ class UploadJob {
     required this.displayName,
     required this.sizeBytes,
     this.path,
+    this.bytes,
     this.textContent,
   });
 
@@ -20,6 +23,7 @@ class UploadJob {
   final String displayName;
   final int sizeBytes;
   final String? path;
+  final Uint8List? bytes;
   final String? textContent;
 
   String get sizeLabel {

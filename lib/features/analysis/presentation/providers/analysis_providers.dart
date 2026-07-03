@@ -18,6 +18,16 @@ final coreConceptExtractionDataSourceProvider =
   return CoreConceptExtractionDataSource(client);
 });
 
+
+final firstQuizGenerationDataSourceProvider =
+    Provider<FirstQuizGenerationDataSource>((ref) {
+  final client = ref.watch(supabaseClientProvider);
+  if (client == null) {
+    throw StateError('Supabase client is not initialized.');
+  }
+  return FirstQuizGenerationDataSource(client);
+});
+
 final analysisRemoteDataSourceProvider = Provider<AnalysisRemoteDataSource>((ref) {
   final client = ref.watch(supabaseClientProvider);
   if (client == null) {
@@ -27,6 +37,7 @@ final analysisRemoteDataSourceProvider = Provider<AnalysisRemoteDataSource>((ref
   return AnalysisRemoteDataSource(
     client: client,
     conceptDataSource: ref.watch(coreConceptExtractionDataSourceProvider),
+    quizGenerationDataSource: ref.watch(firstQuizGenerationDataSourceProvider),
   );
 });
 

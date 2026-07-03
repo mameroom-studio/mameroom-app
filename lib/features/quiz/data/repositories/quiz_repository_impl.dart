@@ -1,4 +1,4 @@
-﻿import '../../domain/entities/question.dart';
+import '../../domain/entities/question.dart';
 import '../../domain/repositories/quiz_repository.dart';
 import '../datasources/quiz_remote_data_source.dart';
 
@@ -9,7 +9,7 @@ class QuizRepositoryImpl implements QuizRepository {
   final QuizRemoteDataSource _remoteDataSource;
 
   @override
-  Future<List<Question>> loadInitialQuestions({required String materialId}) {
+  Future<QuizInitialLoad> loadInitialQuestions({required String materialId}) {
     return _remoteDataSource.loadInitialQuestions(materialId: materialId);
   }
 
@@ -20,6 +20,9 @@ class QuizRepositoryImpl implements QuizRepository {
     required String selectedAnswer,
     required bool isCorrect,
     required int responseTimeMs,
+    required int retryCount,
+    required bool hintUsed,
+    required int hintLevel,
   }) {
     return _remoteDataSource.saveAttempt(
       materialId: materialId,
@@ -27,6 +30,9 @@ class QuizRepositoryImpl implements QuizRepository {
       selectedAnswer: selectedAnswer,
       isCorrect: isCorrect,
       responseTimeMs: responseTimeMs,
+      retryCount: retryCount,
+      hintUsed: hintUsed,
+      hintLevel: hintLevel,
     );
   }
 
@@ -38,6 +44,20 @@ class QuizRepositoryImpl implements QuizRepository {
     return _remoteDataSource.saveFeedback(
       questionId: questionId,
       feedbackType: feedbackType,
+    );
+  }
+  @override
+  Future<void> passLearningItem({
+    required String materialId,
+    required Question question,
+    required LearningPassType passType,
+    required LearningPassReason reason,
+  }) {
+    return _remoteDataSource.passLearningItem(
+      materialId: materialId,
+      question: question,
+      passType: passType,
+      reason: reason,
     );
   }
 }

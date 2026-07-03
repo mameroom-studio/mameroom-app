@@ -1,4 +1,4 @@
-import 'dart:math';
+﻿import 'dart:math';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -48,8 +48,10 @@ class ReviewRemoteDataSource {
         .eq('initial_batch', true)
         .inFilter('material_id', materialIds);
 
+    final passFilter = await _loadPassFilter(userId: user.id);
     final questions = questionRows
         .map((row) => QuestionModel.fromJson(Map<String, dynamic>.from(row as Map)))
+        .where(passFilter.allowsQuestion)
         .toList(growable: false);
 
     final items = <ReviewScheduleModel>[];
@@ -116,6 +118,78 @@ class ReviewRemoteDataSource {
     );
   }
 
+  Future<void> passLearningItem({
+    required ReviewSchedule item,
+    required LearningPassType passType,
+    required LearningPassReason reason,
+  }) async {
+    final user = _client.auth.currentUser;
+    if (user == null) {
+      throw StateError('User session is required to pass learning items.');
+    }
+
+    var query = _client
+        .from(SupabaseTables.learningPasses)
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('pass_type', passType.value);
+    query = passType == LearningPassType.question
+        ? query.eq('question_id', item.question.id)
+        : query.eq('concept_id', item.conceptId);
+    final existing = await query.maybeSingle();
+
+    final row = {
+      'user_id': user.id,
+      'material_id': item.materialId,
+      'question_id': passType == LearningPassType.question ? item.question.id : null,
+      'concept_id': item.conceptId,
+      'pass_type': passType.value,
+      'reason': reason.value,
+      'is_active': true,
+      'restored_at': null,
+    };
+
+    if (existing == null) {
+      await _client.from(SupabaseTables.learningPasses).insert(row);
+    } else {
+      await _client
+          .from(SupabaseTables.learningPasses)
+          .update(row)
+          .eq('id', existing['id'])
+          .eq('user_id', user.id);
+    }
+
+    if (passType == LearningPassType.concept) {
+      await _client
+          .from(SupabaseTables.reviewSchedules)
+          .update({'status': 'skipped'})
+          .eq('user_id', user.id)
+          .eq('material_id', item.materialId)
+          .eq('concept_id', item.conceptId)
+          .eq('status', 'scheduled');
+    }
+  }
+
+  Future<_PassFilter> _loadPassFilter({required String userId}) async {
+    final rows = await _client
+        .from(SupabaseTables.learningPasses)
+        .select('question_id,concept_id,pass_type')
+        .eq('user_id', userId)
+        .eq('is_active', true);
+
+    final questionIds = <String>{};
+    final conceptIds = <String>{};
+    for (final row in rows) {
+      final map = Map<String, dynamic>.from(row as Map);
+      if (map['pass_type'] == LearningPassType.question.value && map['question_id'] != null) {
+        questionIds.add(map['question_id'].toString());
+      }
+      if (map['pass_type'] == LearningPassType.concept.value && map['concept_id'] != null) {
+        conceptIds.add(map['concept_id'].toString());
+      }
+    }
+    return _PassFilter(questionIds: questionIds, conceptIds: conceptIds);
+  }
   Future<MemoryUpdate> _upsertMemoryState({
     required String userId,
     required String materialId,
@@ -264,4 +338,14 @@ class ReviewRemoteDataSource {
   }
 
   double _clamp01(double value) => value.clamp(0, 1).toDouble();
+}
+class _PassFilter {
+  const _PassFilter({required this.questionIds, required this.conceptIds});
+
+  final Set<String> questionIds;
+  final Set<String> conceptIds;
+
+  bool allowsQuestion(Question question) {
+    return !questionIds.contains(question.id) && !conceptIds.contains(question.conceptId);
+  }
 }

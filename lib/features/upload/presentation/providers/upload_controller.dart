@@ -67,7 +67,7 @@ class UploadController extends StateNotifier<UploadDraftState> {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf'],
-      withData: false,
+      withData: true,
     );
 
     final file = result?.files.single;
@@ -93,6 +93,7 @@ class UploadController extends StateNotifier<UploadDraftState> {
         displayName: file.name,
         sizeBytes: file.size,
         path: file.path,
+        bytes: file.bytes,
       ),
     );
   }
@@ -100,7 +101,7 @@ class UploadController extends StateNotifier<UploadDraftState> {
   Future<void> pickImage() async {
     final result = await FilePicker.pickFiles(
       type: FileType.image,
-      withData: false,
+      withData: true,
     );
 
     final file = result?.files.single;
@@ -126,6 +127,7 @@ class UploadController extends StateNotifier<UploadDraftState> {
         displayName: file.name,
         sizeBytes: file.size,
         path: file.path,
+        bytes: file.bytes,
       ),
     );
   }
@@ -137,7 +139,8 @@ class UploadController extends StateNotifier<UploadDraftState> {
       return;
     }
 
-    final length = await image.length();
+    final imageBytes = await image.readAsBytes();
+    final length = imageBytes.length;
     final extension = _extensionOf(image.name);
     if (!_imageExtensions.contains(extension)) {
       _setError('Only image files are supported.');
@@ -156,6 +159,7 @@ class UploadController extends StateNotifier<UploadDraftState> {
         displayName: image.name.isEmpty ? 'Camera photo' : image.name,
         sizeBytes: length,
         path: image.path,
+        bytes: imageBytes,
       ),
     );
   }
@@ -243,6 +247,10 @@ class UploadController extends StateNotifier<UploadDraftState> {
     }
     if (message.contains('User session is required')) {
       return 'Sign in again before uploading.';
+    }
+    if (message.contains('Selected file bytes are unavailable') ||
+        message.contains('Selected file path is missing')) {
+      return 'Could not read the selected file. Please select it again.';
     }
     return message.replaceFirst('Exception: ', '');
   }

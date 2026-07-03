@@ -1,5 +1,5 @@
 ﻿import 'dart:convert';
-import 'dart:io';
+import 'dart:typed_data';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
@@ -9,6 +9,7 @@ import '../../../../shared/supabase/storage_buckets.dart';
 import '../../../../shared/supabase/supabase_tables.dart';
 import '../../domain/entities/upload_job.dart';
 import '../../domain/entities/upload_result.dart';
+import 'local_file_bytes_reader.dart';
 
 class UploadRemoteDataSource {
   const UploadRemoteDataSource(this._client);
@@ -56,21 +57,16 @@ class UploadRemoteDataSource {
       return null;
     }
 
-    final path = job.path;
-    if (path == null || path.isEmpty) {
-      throw StateError('Selected file path is missing.');
-    }
-
-    final originalFile = File(path);
+    final fileBytes = await _bytesFor(job);
     final storagePath = [
       userId,
       materialId,
-      _safeStorageFileName(job.displayName),
+      _storageObjectFileName(materialId, job),
     ].join('/');
 
-    await _client.storage.from(StorageBuckets.materials).upload(
+    await _client.storage.from(StorageBuckets.materials).uploadBinary(
           storagePath,
-          originalFile,
+          fileBytes,
           fileOptions: FileOptions(
             upsert: false,
             contentType: _contentTypeFor(job),
@@ -85,13 +81,22 @@ class UploadRemoteDataSource {
       return sha256.convert(utf8.encode(job.textContent ?? '')).toString();
     }
 
-    final path = job.path;
-    if (path == null || path.isEmpty) {
-      throw StateError('Selected file path is missing.');
+    final fileBytes = await _bytesFor(job);
+    return sha256.convert(fileBytes).toString();
+  }
+
+  Future<Uint8List> _bytesFor(UploadJob job) async {
+    final bytes = job.bytes;
+    if (bytes != null && bytes.isNotEmpty) {
+      return bytes;
     }
 
-    final digest = await sha256.bind(File(path).openRead()).first;
-    return digest.toString();
+    final path = job.path;
+    if (path != null && path.isNotEmpty) {
+      return readLocalFileBytes(path);
+    }
+
+    throw StateError('Selected file bytes are unavailable. Please select the file again.');
   }
 
   String _sourceTypeValue(UploadSourceType sourceType) {
@@ -120,11 +125,27 @@ class UploadRemoteDataSource {
     return 'image/jpeg';
   }
 
-  String _safeStorageFileName(String fileName) {
-    return fileName
+  String _storageObjectFileName(String materialId, UploadJob job) {
+    final extension = _safeExtensionFor(job);
+    return extension.isEmpty ? materialId : '$materialId.$extension';
+  }
+
+  String _safeExtensionFor(UploadJob job) {
+    final extension = job.displayName
         .trim()
-        .replaceAll(RegExp(r'[\\/]+'), '_')
-        .replaceAll(RegExp(r'\s+'), '_');
+        .toLowerCase()
+        .split('.')
+        .lastWhere((part) => part.isNotEmpty, orElse: () => '');
+
+    if (RegExp(r'^[a-z0-9]+$').hasMatch(extension)) {
+      return extension;
+    }
+
+    return switch (job.sourceType) {
+      UploadSourceType.pdf => 'pdf',
+      UploadSourceType.image || UploadSourceType.camera => 'jpg',
+      UploadSourceType.text => '',
+    };
   }
 
   String _newUuidV4() {

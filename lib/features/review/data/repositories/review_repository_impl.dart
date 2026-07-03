@@ -1,4 +1,4 @@
-import '../../../quiz/domain/entities/question.dart';
+﻿import '../../../quiz/domain/entities/question.dart';
 import '../../domain/entities/review_schedule.dart';
 import '../../domain/repositories/review_repository.dart';
 import '../datasources/review_remote_data_source.dart';
@@ -26,6 +26,18 @@ class ReviewRepositoryImpl implements ReviewRepository {
       selectedAnswer: selectedAnswer,
       isCorrect: isCorrect,
       responseTimeMs: responseTimeMs,
+    );
+  }
+  @override
+  Future<void> passLearningItem({
+    required ReviewSchedule item,
+    required LearningPassType passType,
+    required LearningPassReason reason,
+  }) {
+    return _remoteDataSource.passLearningItem(
+      item: item,
+      passType: passType,
+      reason: reason,
     );
   }
 }

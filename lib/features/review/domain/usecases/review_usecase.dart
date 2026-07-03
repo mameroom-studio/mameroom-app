@@ -1,4 +1,4 @@
-import '../../../quiz/domain/entities/question.dart';
+﻿import '../../../quiz/domain/entities/question.dart';
 import '../entities/review_schedule.dart';
 import '../repositories/review_repository.dart';
 
@@ -22,6 +22,17 @@ class ReviewUseCase {
       selectedAnswer: selectedAnswer,
       isCorrect: isCorrect,
       responseTimeMs: responseTimeMs,
+    );
+  }
+  Future<void> passLearningItem({
+    required ReviewSchedule item,
+    required LearningPassType passType,
+    required LearningPassReason reason,
+  }) {
+    return repository.passLearningItem(
+      item: item,
+      passType: passType,
+      reason: reason,
     );
   }
 }

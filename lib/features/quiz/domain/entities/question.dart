@@ -1,4 +1,4 @@
-﻿enum QuizQuestionType {
+enum QuizQuestionType {
   multipleChoice('multiple_choice'),
   ox('ox'),
   fillBlank('fill_blank');
@@ -13,6 +13,27 @@
       orElse: () => QuizQuestionType.multipleChoice,
     );
   }
+}
+
+enum LearningPassType {
+  question('question'),
+  concept('concept');
+
+  const LearningPassType(this.value);
+
+  final String value;
+}
+
+enum LearningPassReason {
+  alreadyKnown('already_known', '이미 알고 있음'),
+  outOfScope('out_of_scope', '시험 범위 아님'),
+  lowQuality('low_quality', '문제 품질 낮음'),
+  reviewLater('review_later', '나중에 다시 볼 예정');
+
+  const LearningPassReason(this.value, this.label);
+
+  final String value;
+  final String label;
 }
 
 class Question {
@@ -45,18 +66,38 @@ class Question {
   final int orderIndex;
 }
 
+class QuizInitialLoad {
+  const QuizInitialLoad({
+    required this.materialTitle,
+    required this.questions,
+  });
+
+  final String materialTitle;
+  final List<Question> questions;
+}
 class QuizAnswerResult {
   const QuizAnswerResult({
     required this.question,
     required this.selectedAnswer,
     required this.isCorrect,
     required this.responseTimeMs,
+    required this.attemptNumber,
+    required this.retryCount,
+    required this.hintUsed,
+    required this.hintLevel,
   });
 
   final Question question;
   final String selectedAnswer;
   final bool isCorrect;
   final int responseTimeMs;
+  final int attemptNumber;
+  final int retryCount;
+  final bool hintUsed;
+  final int hintLevel;
+
+  bool get isRetry => retryCount > 0;
+  bool get successAttempt => isCorrect;
 }
 
 class QuizResultSummary {
@@ -66,7 +107,28 @@ class QuizResultSummary {
 
   int get totalCount => answers.length;
   int get correctCount => answers.where((answer) => answer.isCorrect).length;
+  int get firstAttemptCount => answers.where((answer) => !answer.isRetry).length;
+  int get firstAttemptCorrectCount =>
+      answers.where((answer) => !answer.isRetry && answer.isCorrect).length;
+  int get retryCount => answers.where((answer) => answer.isRetry).length;
+  int get retryCorrectCount =>
+      answers.where((answer) => answer.isRetry && answer.isCorrect).length;
+  int get hintUsedCount => answers.where((answer) => answer.hintUsed).length;
   double get accuracy => totalCount == 0 ? 0 : correctCount / totalCount;
+  double get firstAttemptAccuracy =>
+      firstAttemptCount == 0 ? 0 : firstAttemptCorrectCount / firstAttemptCount;
+  double get retrySuccessRate => retryCount == 0 ? 0 : retryCorrectCount / retryCount;
+  double get memoryConsolidationRate {
+    final uniqueQuestions = answers.map((answer) => answer.question.id).toSet();
+    if (uniqueQuestions.isEmpty) {
+      return 0;
+    }
+    final correctQuestions = answers
+        .where((answer) => answer.isCorrect)
+        .map((answer) => answer.question.id)
+        .toSet();
+    return correctQuestions.length / uniqueQuestions.length;
+  }
   double get averageResponseTimeMs {
     if (answers.isEmpty) {
       return 0;

@@ -1,4 +1,4 @@
-﻿import '../entities/question.dart';
+import '../entities/question.dart';
 import '../repositories/quiz_repository.dart';
 
 class QuizUseCase {
@@ -6,7 +6,7 @@ class QuizUseCase {
 
   final QuizRepository repository;
 
-  Future<List<Question>> loadInitialQuestions({required String materialId}) {
+  Future<QuizInitialLoad> loadInitialQuestions({required String materialId}) {
     return repository.loadInitialQuestions(materialId: materialId);
   }
 
@@ -16,6 +16,9 @@ class QuizUseCase {
     required String selectedAnswer,
     required bool isCorrect,
     required int responseTimeMs,
+    required int retryCount,
+    required bool hintUsed,
+    required int hintLevel,
   }) {
     return repository.saveAttempt(
       materialId: materialId,
@@ -23,6 +26,9 @@ class QuizUseCase {
       selectedAnswer: selectedAnswer,
       isCorrect: isCorrect,
       responseTimeMs: responseTimeMs,
+      retryCount: retryCount,
+      hintUsed: hintUsed,
+      hintLevel: hintLevel,
     );
   }
 
@@ -33,6 +39,19 @@ class QuizUseCase {
     return repository.saveFeedback(
       questionId: questionId,
       feedbackType: feedbackType,
+    );
+  }
+  Future<void> passLearningItem({
+    required String materialId,
+    required Question question,
+    required LearningPassType passType,
+    required LearningPassReason reason,
+  }) {
+    return repository.passLearningItem(
+      materialId: materialId,
+      question: question,
+      passType: passType,
+      reason: reason,
     );
   }
 }

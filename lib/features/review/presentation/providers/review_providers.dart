@@ -1,4 +1,4 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+﻿import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 
 import '../../../../shared/supabase/supabase_client_provider.dart';
@@ -199,6 +199,48 @@ class ReviewController extends StateNotifier<AsyncValue<ReviewSessionState>> {
     }
   }
 
+  Future<void> passCurrentItem({
+    required LearningPassType passType,
+    required LearningPassReason reason,
+  }) async {
+    final value = state.asData?.value;
+    final item = value?.currentItem;
+    if (value == null || item == null || value.isAnswerChecked || value.isSaving) {
+      return;
+    }
+
+    state = AsyncData(value.copyWith(isSaving: true));
+    try {
+      await _ref.read(reviewUseCaseProvider).passLearningItem(
+            item: item,
+            passType: passType,
+            reason: reason,
+          );
+
+      final updatedItems = value.items.where((candidate) {
+        if (passType == LearningPassType.question) {
+          return candidate.question.id != item.question.id;
+        }
+        return candidate.conceptId != item.conceptId;
+      }).toList(growable: false);
+      final nextIndex = updatedItems.isEmpty
+          ? 0
+          : value.currentIndex.clamp(0, updatedItems.length - 1).toInt();
+
+      state = AsyncData(
+        value.copyWith(
+          items: updatedItems,
+          currentIndex: nextIndex,
+          selectedAnswer: '',
+          isAnswerChecked: false,
+          isSaving: false,
+          questionStartedAt: DateTime.now(),
+        ),
+      );
+    } catch (error, stackTrace) {
+      state = AsyncError(error, stackTrace);
+    }
+  }
   Future<void> awardCompletionRewards() async {
     final value = state.asData?.value;
     if (value == null || value.items.isEmpty || value.rewardsAwarded || value.isRewarding) {

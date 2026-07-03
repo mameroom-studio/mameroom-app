@@ -8,11 +8,14 @@ class AnalysisRemoteDataSource {
   const AnalysisRemoteDataSource({
     required SupabaseClient client,
     required CoreConceptExtractionDataSource conceptDataSource,
+    required FirstQuizGenerationDataSource quizGenerationDataSource,
   })  : _client = client,
-        _conceptDataSource = conceptDataSource;
+        _conceptDataSource = conceptDataSource,
+        _quizGenerationDataSource = quizGenerationDataSource;
 
   final SupabaseClient _client;
   final CoreConceptExtractionDataSource _conceptDataSource;
+  final FirstQuizGenerationDataSource _quizGenerationDataSource;
 
   Future<AnalysisProgress> runFastPathAnalysis({
     required String materialId,
@@ -29,49 +32,70 @@ class AnalysisRemoteDataSource {
         material['status'] as String? ?? 'uploaded',
       );
 
-      if (currentStatus == MaterialAnalysisStatus.conceptsCompleted ||
-          currentStatus == MaterialAnalysisStatus.completed) {
+      if (currentStatus == MaterialAnalysisStatus.completed) {
         final conceptCount = await _countConcepts(materialId: materialId);
         return AnalysisProgress(
           materialId: materialId,
-          status: MaterialAnalysisStatus.conceptsCompleted,
+          status: MaterialAnalysisStatus.completed,
           progress: 1,
-          message: 'Core concepts are already extracted.',
+          message: 'Quiz is ready.',
           conceptCount: conceptCount,
         );
       }
 
+      var conceptCount = 0;
+      var usedCache = false;
+
+      if (currentStatus == MaterialAnalysisStatus.conceptsCompleted) {
+        conceptCount = await _countConcepts(materialId: materialId);
+      } else {
+        onProgress?.call(AnalysisProgress(
+          materialId: materialId,
+          status: MaterialAnalysisStatus.extracting,
+          progress: 0.25,
+          message: 'Requesting server-side text extraction.',
+        ));
+        onProgress?.call(AnalysisProgress(
+          materialId: materialId,
+          status: MaterialAnalysisStatus.analyzing,
+          progress: 0.55,
+          message: 'Calling extract-core-concepts Edge Function.',
+        ));
+
+        final result = await _conceptDataSource.extractConcepts(materialId: materialId);
+        conceptCount = result.conceptCount;
+        usedCache = result.usedCache;
+
+        onProgress?.call(AnalysisProgress(
+          materialId: materialId,
+          status: MaterialAnalysisStatus.conceptsCompleted,
+          progress: 0.72,
+          message: 'Core concepts saved on the server.',
+          conceptCount: conceptCount,
+          usedCache: usedCache,
+        ));
+      }
+
       onProgress?.call(AnalysisProgress(
         materialId: materialId,
-        status: MaterialAnalysisStatus.extracting,
-        progress: 0.25,
-        message: 'Requesting server-side text extraction.',
-      ));
-      onProgress?.call(AnalysisProgress(
-        materialId: materialId,
-        status: MaterialAnalysisStatus.analyzing,
-        progress: 0.55,
-        message: 'Calling extract-core-concepts Edge Function.',
+        status: MaterialAnalysisStatus.questionsGenerating,
+        progress: 0.86,
+        message: 'Generating your first 10 quiz questions.',
+        conceptCount: conceptCount,
+        usedCache: usedCache,
       ));
 
-      final result = await _conceptDataSource.extractConcepts(materialId: materialId);
-
-      onProgress?.call(AnalysisProgress(
+      final quizResult = await _quizGenerationDataSource.generateFirstQuiz(
         materialId: materialId,
-        status: MaterialAnalysisStatus.conceptsCompleted,
-        progress: 1,
-        message: 'Core concepts saved on the server.',
-        conceptCount: result.conceptCount,
-        usedCache: result.usedCache,
-      ));
+      );
 
       return AnalysisProgress(
         materialId: materialId,
-        status: MaterialAnalysisStatus.conceptsCompleted,
+        status: MaterialAnalysisStatus.completed,
         progress: 1,
-        message: result.message,
-        conceptCount: result.conceptCount,
-        usedCache: result.usedCache,
+        message: quizResult.message,
+        conceptCount: conceptCount,
+        usedCache: usedCache || quizResult.reused,
       );
     } catch (error) {
       await _safeMarkFailed(materialId: materialId, error: error);

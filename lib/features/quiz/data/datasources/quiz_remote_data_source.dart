@@ -11,7 +11,7 @@ class QuizRemoteDataSource {
 
   final SupabaseClient _client;
 
-  Future<List<QuestionModel>> loadInitialQuestions({required String materialId}) async {
+  Future<QuizInitialLoad> loadInitialQuestions({required String materialId}) async {
     final user = _client.auth.currentUser;
     if (user == null) {
       throw StateError('User session is required to load quiz questions.');
@@ -19,7 +19,7 @@ class QuizRemoteDataSource {
 
     final material = await _client
         .from(SupabaseTables.studyMaterials)
-        .select('id,status')
+        .select('id,status,title')
         .eq('id', materialId)
         .eq('user_id', user.id)
         .maybeSingle();
@@ -40,17 +40,82 @@ class QuizRemoteDataSource {
         .order('order_index', ascending: true)
         .limit(10);
 
-    return rows
-        .map((row) => QuestionModel.fromJson(Map<String, dynamic>.from(row as Map)))
+    final passFilter = await _loadPassFilter(userId: user.id, materialId: materialId);
+
+    final questions = rows
+        .map((row) => QuestionModel.fromJson(_sanitizeQuestionRow(Map<String, dynamic>.from(row as Map))))
+        .where(passFilter.allowsQuestion)
         .toList(growable: false);
+
+    return QuizInitialLoad(
+      materialTitle: _safeDisplayText(material['title']) ?? '학습 자료',
+      questions: questions,
+    );
   }
 
+  Map<String, dynamic> _sanitizeQuestionRow(Map<String, dynamic> row) {
+    row['question_text'] = _safeDisplayText(row['question_text']) ?? '문제 문장을 다시 생성해야 합니다.';
+    row['answer'] = _safeDisplayText(row['answer']) ?? '정답을 다시 생성해야 합니다.';
+    row['explanation'] = _safeDisplayText(row['explanation']) ?? '해설을 다시 생성해야 합니다.';
+    final evidence = row['evidence'];
+    if (evidence is Map) {
+      row['evidence'] = {
+        ...evidence,
+        'text': _safeDisplayText(evidence['text']) ?? '',
+      };
+    } else {
+      row['evidence'] = {'text': _safeDisplayText(evidence) ?? ''};
+    }
+    final options = row['options'];
+    if (options is List) {
+      row['options'] = options
+          .map(_safeDisplayText)
+          .whereType<String>()
+          .where((value) => value.trim().isNotEmpty)
+          .toList(growable: false);
+    }
+    return row;
+  }
+
+  String? _safeDisplayText(Object? value) {
+    if (value == null) return null;
+    final sanitized = value
+        .toString()
+        .replaceAll(_uuidPattern, '')
+        .replaceAll(_storagePathPattern, '')
+        .replaceAll(RegExp(r'\b(?:material|concept|question|section|source)[_-]?id\b\s*[:=]?\s*', caseSensitive: false), '')
+        .replaceAll(RegExp(r'\b(?:materialId|conceptId|questionId|sectionId|sourceHash|storagePath|fileHash)\b\s*[:=]?\s*'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (sanitized.isEmpty || _containsInternalIdentifier(sanitized)) return null;
+    return sanitized;
+  }
+
+  bool _containsInternalIdentifier(String value) {
+    return _uuidPattern.hasMatch(value) ||
+        _storagePathPattern.hasMatch(value) ||
+        RegExp(r'\b(?:material|concept|question|section|source)[_-]?id\b', caseSensitive: false).hasMatch(value) ||
+        RegExp(r'\b(?:materialId|conceptId|questionId|sectionId|sourceHash|storagePath|fileHash)\b').hasMatch(value);
+  }
+
+  static final _uuidPattern = RegExp(
+    r'\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b',
+    caseSensitive: false,
+  );
+
+  static final _storagePathPattern = RegExp(
+    r'\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[\w.-]+\b',
+    caseSensitive: false,
+  );
   Future<MemoryUpdate> saveAttempt({
     required String materialId,
     required String questionId,
     required String selectedAnswer,
     required bool isCorrect,
     required int responseTimeMs,
+    required int retryCount,
+    required bool hintUsed,
+    required int hintLevel,
   }) async {
     final user = _client.auth.currentUser;
     if (user == null) {
@@ -70,6 +135,10 @@ class QuizRemoteDataSource {
       'selected_answer': selectedAnswer,
       'is_correct': isCorrect,
       'response_time_ms': responseTimeMs,
+      'success_attempt': isCorrect,
+      'retry_count': retryCount,
+      'hint_used': hintUsed,
+      'hint_level': hintLevel,
     });
 
     return _upsertMemoryState(
@@ -79,6 +148,9 @@ class QuizRemoteDataSource {
       difficulty: question.difficulty,
       isCorrect: isCorrect,
       responseTimeMs: responseTimeMs,
+      retryCount: retryCount,
+      hintUsed: hintUsed,
+      hintLevel: hintLevel,
     );
   }
 
@@ -98,6 +170,83 @@ class QuizRemoteDataSource {
     }, onConflict: 'user_id,question_id,feedback_type');
   }
 
+  Future<void> passLearningItem({
+    required String materialId,
+    required Question question,
+    required LearningPassType passType,
+    required LearningPassReason reason,
+  }) async {
+    final user = _client.auth.currentUser;
+    if (user == null) {
+      throw StateError('User session is required to pass learning items.');
+    }
+
+    var query = _client
+        .from(SupabaseTables.learningPasses)
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('pass_type', passType.value);
+    query = passType == LearningPassType.question
+        ? query.eq('question_id', question.id)
+        : query.eq('concept_id', question.conceptId);
+    final existing = await query.maybeSingle();
+
+    final row = {
+      'user_id': user.id,
+      'material_id': materialId,
+      'question_id': passType == LearningPassType.question ? question.id : null,
+      'concept_id': question.conceptId,
+      'pass_type': passType.value,
+      'reason': reason.value,
+      'is_active': true,
+      'restored_at': null,
+    };
+
+    if (existing == null) {
+      await _client.from(SupabaseTables.learningPasses).insert(row);
+    } else {
+      await _client
+          .from(SupabaseTables.learningPasses)
+          .update(row)
+          .eq('id', existing['id'])
+          .eq('user_id', user.id);
+    }
+
+    if (passType == LearningPassType.concept) {
+      await _client
+          .from(SupabaseTables.reviewSchedules)
+          .update({'status': 'skipped'})
+          .eq('user_id', user.id)
+          .eq('material_id', materialId)
+          .eq('concept_id', question.conceptId)
+          .eq('status', 'scheduled');
+    }
+  }
+
+  Future<_PassFilter> _loadPassFilter({
+    required String userId,
+    required String materialId,
+  }) async {
+    final rows = await _client
+        .from(SupabaseTables.learningPasses)
+        .select('question_id,concept_id,pass_type')
+        .eq('user_id', userId)
+        .eq('material_id', materialId)
+        .eq('is_active', true);
+
+    final questionIds = <String>{};
+    final conceptIds = <String>{};
+    for (final row in rows) {
+      final map = Map<String, dynamic>.from(row as Map);
+      if (map['pass_type'] == LearningPassType.question.value && map['question_id'] != null) {
+        questionIds.add(map['question_id'].toString());
+      }
+      if (map['pass_type'] == LearningPassType.concept.value && map['concept_id'] != null) {
+        conceptIds.add(map['concept_id'].toString());
+      }
+    }
+    return _PassFilter(questionIds: questionIds, conceptIds: conceptIds);
+  }
   Future<QuestionModel> _loadQuestionForMemory({
     required String userId,
     required String materialId,
@@ -124,6 +273,9 @@ class QuizRemoteDataSource {
     required int difficulty,
     required bool isCorrect,
     required int responseTimeMs,
+    required int retryCount,
+    required bool hintUsed,
+    required int hintLevel,
   }) async {
     final now = DateTime.now().toUtc();
     final existing = await _client
@@ -141,7 +293,7 @@ class QuizRemoteDataSource {
     final responseTime = _responseTimeScore(responseTimeMs);
     final difficultyScore = difficulty.clamp(1, 5).toDouble() / 5.0;
     final forgettingCurve = _forgettingCurveScore(lastReviewedAt, now);
-    const confidence = 0.5;
+    final confidence = _clamp01(0.5 - (hintLevel.clamp(0, 2) * 0.15));
 
     final memoryScore = _clamp01(
       accuracy * 0.35 +
@@ -266,4 +418,14 @@ class QuizRemoteDataSource {
   }
 
   double _clamp01(double value) => value.clamp(0, 1).toDouble();
+}
+class _PassFilter {
+  const _PassFilter({required this.questionIds, required this.conceptIds});
+
+  final Set<String> questionIds;
+  final Set<String> conceptIds;
+
+  bool allowsQuestion(Question question) {
+    return !questionIds.contains(question.id) && !conceptIds.contains(question.conceptId);
+  }
 }

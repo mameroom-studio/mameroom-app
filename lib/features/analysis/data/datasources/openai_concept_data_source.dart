@@ -46,9 +46,10 @@ class CoreConceptExtractionDataSource {
   Future<CoreConceptExtractionResult> extractConcepts({
     required String materialId,
   }) async {
-    final response = await _client.functions.invoke(
+    final response = await _invokeFunction(
+      _client,
       functionName,
-      body: {'materialId': materialId},
+      materialId: materialId,
     );
 
     final data = response.data;
@@ -61,4 +62,91 @@ class CoreConceptExtractionDataSource {
 
     throw StateError('extract-core-concepts returned an invalid response.');
   }
+}
+
+class FirstQuizGenerationResult {
+  const FirstQuizGenerationResult({
+    required this.materialId,
+    required this.status,
+    required this.questionCount,
+    required this.reused,
+    required this.message,
+  });
+
+  final String materialId;
+  final String status;
+  final int questionCount;
+  final bool reused;
+  final String message;
+
+  factory FirstQuizGenerationResult.fromJson(Map<String, dynamic> json) {
+    return FirstQuizGenerationResult(
+      materialId: json['materialId'] as String? ?? '',
+      status: json['status'] as String? ?? 'completed',
+      questionCount: CoreConceptExtractionResult._intFrom(
+        json['questionCount'] ?? json['questionsCount'] ?? json['count'],
+      ),
+      reused: json['reused'] as bool? ?? json['usedCache'] as bool? ?? false,
+      message: json['message'] as String? ?? 'First quiz generated.',
+    );
+  }
+}
+
+class FirstQuizGenerationDataSource {
+  const FirstQuizGenerationDataSource(this._client);
+
+  static const functionName = 'generate-first-quiz';
+
+  final SupabaseClient _client;
+
+  Future<FirstQuizGenerationResult> generateFirstQuiz({
+    required String materialId,
+  }) async {
+    final response = await _invokeFunction(
+      _client,
+      functionName,
+      materialId: materialId,
+    );
+
+    final data = response.data;
+    if (data is Map<String, dynamic>) {
+      return FirstQuizGenerationResult.fromJson(data);
+    }
+    if (data is Map) {
+      return FirstQuizGenerationResult.fromJson(Map<String, dynamic>.from(data));
+    }
+
+    throw StateError('generate-first-quiz returned an invalid response.');
+  }
+}
+
+Future<FunctionResponse> _invokeFunction(
+  SupabaseClient client,
+  String functionName, {
+  required String materialId,
+}) async {
+  try {
+    return await client.functions.invoke(
+      functionName,
+      body: {'materialId': materialId},
+    );
+  } on FunctionException catch (error) {
+    throw StateError(_functionErrorMessage(functionName, error));
+  }
+}
+
+String _functionErrorMessage(String functionName, FunctionException error) {
+  final details = error.details;
+  if (details is Map) {
+    final code = details['code']?.toString();
+    final message = details['error']?.toString() ?? details['message']?.toString();
+    final suffix = code == null || code.isEmpty ? '' : '$code: ';
+    if (message != null && message.isNotEmpty) {
+      return '$functionName failed (${error.status}): $suffix$message';
+    }
+  }
+  if (details is String && details.isNotEmpty) {
+    return '$functionName failed (${error.status}): $details';
+  }
+  return '$functionName failed (${error.status}).';
 }

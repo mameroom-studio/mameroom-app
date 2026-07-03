@@ -1,4 +1,4 @@
-import '../../../quiz/domain/entities/question.dart';
+﻿import '../../../quiz/domain/entities/question.dart';
 import '../entities/review_schedule.dart';
 
 abstract interface class ReviewRepository {
@@ -9,5 +9,10 @@ abstract interface class ReviewRepository {
     required String selectedAnswer,
     required bool isCorrect,
     required int responseTimeMs,
+  });
+  Future<void> passLearningItem({
+    required ReviewSchedule item,
+    required LearningPassType passType,
+    required LearningPassReason reason,
   });
 }

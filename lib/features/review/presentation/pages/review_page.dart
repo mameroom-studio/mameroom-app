@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -129,6 +129,14 @@ class _ReviewPageState extends ConsumerState<ReviewPage> {
         const SizedBox(height: 20),
         if (session.isAnswerChecked && session.currentAnswer != null)
           _AnswerReview(answer: session.currentAnswer!),
+        if (!session.isAnswerChecked) ...[
+          const SizedBox(height: 12),
+          _PassActions(
+            enabled: !session.isSaving,
+            onPassQuestion: () => _passCurrentReview(LearningPassType.question),
+            onPassConcept: () => _passCurrentReview(LearningPassType.concept),
+          ),
+        ],
         const Spacer(),
         FilledButton(
           onPressed: _buttonEnabled(session)
@@ -164,6 +172,28 @@ class _ReviewPageState extends ConsumerState<ReviewPage> {
     );
   }
 
+  Future<void> _passCurrentReview(LearningPassType passType) async {
+    final reason = await showDialog<LearningPassReason>(
+      context: context,
+      builder: (context) => const _PassReasonDialog(),
+    );
+    if (reason == null || !mounted) {
+      return;
+    }
+
+    await ref.read(reviewControllerProvider.notifier).passCurrentItem(
+          passType: passType,
+          reason: reason,
+        );
+    if (!mounted) {
+      return;
+    }
+    _textController.clear();
+    final label = passType == LearningPassType.question ? 'Question' : 'Concept';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$label passed.')),
+    );
+  }
   void _showRewardFeedback(List<String> messages) {
     if (messages.isEmpty) {
       return;
@@ -218,6 +248,57 @@ class _ReviewPageState extends ConsumerState<ReviewPage> {
   }
 }
 
+class _PassActions extends StatelessWidget {
+  const _PassActions({
+    required this.enabled,
+    required this.onPassQuestion,
+    required this.onPassConcept,
+  });
+
+  final bool enabled;
+  final VoidCallback onPassQuestion;
+  final VoidCallback onPassConcept;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: enabled ? onPassQuestion : null,
+            icon: const Icon(Icons.skip_next_outlined),
+            label: const Text('Pass question'),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: enabled ? onPassConcept : null,
+            icon: const Icon(Icons.block_outlined),
+            label: const Text('Pass concept'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PassReasonDialog extends StatelessWidget {
+  const _PassReasonDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    return SimpleDialog(
+      title: const Text('Pass reason'),
+      children: LearningPassReason.values.map((reason) {
+        return SimpleDialogOption(
+          onPressed: () => Navigator.of(context).pop(reason),
+          child: Text(reason.label),
+        );
+      }).toList(growable: false),
+    );
+  }
+}
 class _AnswerInput extends StatelessWidget {
   const _AnswerInput({
     required this.question,

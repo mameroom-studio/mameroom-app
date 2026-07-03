@@ -1,7 +1,7 @@
-﻿import '../entities/question.dart';
+import '../entities/question.dart';
 
 abstract interface class QuizRepository {
-  Future<List<Question>> loadInitialQuestions({required String materialId});
+  Future<QuizInitialLoad> loadInitialQuestions({required String materialId});
 
   Future<MemoryUpdate> saveAttempt({
     required String materialId,
@@ -9,10 +9,20 @@ abstract interface class QuizRepository {
     required String selectedAnswer,
     required bool isCorrect,
     required int responseTimeMs,
+    required int retryCount,
+    required bool hintUsed,
+    required int hintLevel,
   });
 
   Future<void> saveFeedback({
     required String questionId,
     required String feedbackType,
+  });
+
+  Future<void> passLearningItem({
+    required String materialId,
+    required Question question,
+    required LearningPassType passType,
+    required LearningPassReason reason,
   });
 }

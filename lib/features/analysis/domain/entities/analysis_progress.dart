@@ -39,10 +39,7 @@ class AnalysisProgress {
   final int conceptCount;
   final bool usedCache;
 
-  bool get isCompleted {
-    return status == MaterialAnalysisStatus.conceptsCompleted ||
-        status == MaterialAnalysisStatus.completed;
-  }
+  bool get isCompleted => status == MaterialAnalysisStatus.completed;
 
   bool get isFailed => status == MaterialAnalysisStatus.failed;
 
