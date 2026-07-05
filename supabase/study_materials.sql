@@ -104,7 +104,7 @@ create table if not exists public.questions (
   concept_id uuid not null references public.concepts(id) on delete cascade,
   section_id uuid,
   source_hash text not null,
-  type text not null check (type in ('multiple_choice', 'ox', 'fill_blank')),
+  type text not null check (type in ('short_answer', 'multiple_choice', 'fill_blank')),
   question_text text not null,
   options jsonb not null default '[]'::jsonb,
   answer text not null,

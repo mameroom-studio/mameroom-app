@@ -5,6 +5,8 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const MIN_USABLE_CONCEPTS = 5;
+
 type Material = {
   id: string;
   user_id: string;
@@ -37,6 +39,7 @@ type ErrorCode =
   | "OPENAI_REQUEST_FAILED"
   | "OPENAI_PARSE_FAILED"
   | "CONCEPTS_EMPTY"
+  | "CONCEPTS_INSUFFICIENT"
   | "CONCEPTS_INSERT_FAILED"
   | "DB_UPDATE_FAILED"
   | "RLS_POLICY_DENIED"
@@ -119,7 +122,7 @@ Deno.serve(async (req) => {
     if (sameHash && sameHash.status !== "concepts_completed" && sameHash.status !== "completed") {
       await updateMaterial(supabase, material.id, {
         status: "failed",
-        analysis_error: "The same file hash already has an analysis job.",
+        analysis_error: "DUPLICATE_ANALYSIS_IN_PROGRESS: The same file hash already has an analysis job.",
       }, authData.user.id);
       return errorJson(new AppError("DUPLICATE_ANALYSIS_IN_PROGRESS", "The same file hash already has an analysis job.", 409), material.id);
     }
@@ -131,6 +134,9 @@ Deno.serve(async (req) => {
         material.id,
         sameHash.structured_text,
       );
+      if (copiedCount < MIN_USABLE_CONCEPTS) {
+        throw new AppError("CONCEPTS_INSUFFICIENT", `Cached analysis has only ${copiedCount} usable concepts. At least ${MIN_USABLE_CONCEPTS} are required.`, 422);
+      }
       await updateMaterial(supabase, material.id, {
         status: "concepts_completed",
         analysis_completed_at: new Date().toISOString(),
@@ -171,11 +177,29 @@ Deno.serve(async (req) => {
         conceptCount: conceptsToSave.length,
       });
     }
-    if (conceptsToSave.length === 0) {
+    const usableConcepts = usableConceptsForQuiz(conceptsToSave);
+    logStep("extract.concepts.quality_gate", {
+      materialId: material.id,
+      candidateCount: conceptsToSave.length,
+      usableCount: usableConcepts.length,
+      usableConceptNames: usableConcepts.map((concept) => concept.name),
+    });
+    if (usableConcepts.length === 0) {
       throw new AppError("CONCEPTS_EMPTY", "No exam-worthy concepts found after deterministic filtering and importance evaluation.", 422);
     }
-    logStep("extract.concepts.save.start", { materialId: material.id, conceptCount: conceptsToSave.length });
-    await saveConcepts(supabase, authData.user.id, material.id, conceptsToSave);
+    if (usableConcepts.length < MIN_USABLE_CONCEPTS) {
+      throw new AppError("CONCEPTS_INSUFFICIENT", `Only ${usableConcepts.length} usable concepts found. At least ${MIN_USABLE_CONCEPTS} are required for quiz generation.`, 422);
+    }
+    logStep("extract.concepts.save.start", {
+      materialId: material.id,
+      conceptCount: usableConcepts.length,
+      concepts: usableConcepts.map((concept) => ({
+        name: concept.name,
+        importance_score: concept.importance_score,
+        concept_type: concept.concept_type,
+      })),
+    });
+    await saveConcepts(supabase, authData.user.id, material.id, usableConcepts);
 
     await updateMaterial(supabase, material.id, {
       status: "concepts_completed",
@@ -185,7 +209,7 @@ Deno.serve(async (req) => {
     return json({
       materialId,
       status: "concepts_completed",
-      conceptCount: conceptsToSave.length,
+      conceptCount: usableConcepts.length,
       usedCache: false,
       message: "Core concepts extracted by extract-core-concepts.",
     });
@@ -193,7 +217,7 @@ Deno.serve(async (req) => {
     const serialized = serializeError(error);
     logStep("extract.error", { materialId: activeMaterialId, error: serialized });
     if (activeSupabase && activeMaterialId) {
-      await markMaterialFailed(activeSupabase, activeMaterialId, serialized.message, activeUserId);
+      await markMaterialFailed(activeSupabase, activeMaterialId, `${serialized.code}: ${serialized.message}`, activeUserId);
     }
     return errorJson(error, activeMaterialId);
   }
@@ -224,6 +248,7 @@ async function findSameHashMaterial(
     .eq("user_id", userId)
     .eq("file_hash", fileHash)
     .neq("id", materialId)
+    .neq("status", "failed")
     .limit(1);
 
   if (error) throw new AppError("DB_QUERY_FAILED", "Failed to find same file hash material.", 500, error);
@@ -499,7 +524,7 @@ function conceptsArrayFromParsed(parsed: unknown): unknown[] {
 }
 
 function fallbackConceptsFromText(structuredText: string, title: string): Concept[] {
-  const keywords = extractFallbackKeywords(structuredText, title).slice(0, 5);
+  const keywords = extractFallbackKeywords(structuredText, title).slice(0, 12);
   return keywords
     .map((keyword, index) => {
       const name = sanitizeConceptName(keyword);
@@ -530,7 +555,7 @@ function fallbackConceptsFromText(structuredText: string, title: string): Concep
 
 function extractFallbackKeywords(structuredText: string, title: string) {
   const counts = new Map<string, number>();
-  const source = title + "\n" + structuredText;
+  const source = structuredText;
   const tokens = source.match(/[A-Za-z][A-Za-z0-9+./&-]{1,30}|[가-힣][가-힣A-Za-z0-9+./&-]{1,30}/g) ?? [];
   for (const token of tokens) {
     const normalized = token.trim();
@@ -621,6 +646,28 @@ function sanitizeConceptType(value: unknown) {
 
 function isQuestionWorthyConceptType(value: string) {
   return questionWorthyConceptTypes.has(value);
+}
+
+function usableConceptsForQuiz(concepts: Concept[]) {
+  return concepts
+    .map((concept) => ({
+      ...concept,
+      name: sanitizeConceptName(concept.name),
+      description: sanitizeVisibleKoreanText(concept.description),
+      evidence: sanitizeVisibleKoreanText(concept.evidence),
+      importance_score: Math.max(0, Math.min(100, Math.round(Number(concept.importance_score) || 0))),
+      concept_type: sanitizeConceptType(concept.concept_type),
+      exclusion_reason: sanitizeExclusionReason(concept.exclusion_reason),
+    }))
+    .filter((concept): concept is Concept => Boolean(
+      concept.name &&
+      concept.description &&
+      concept.evidence &&
+      concept.importance_score >= 65 &&
+      concept.exclusion_reason == null &&
+      isQuestionWorthyConceptType(concept.concept_type) &&
+      !rejectCandidateReason(concept.name),
+    ));
 }
 
 function sanitizeExclusionReason(value: unknown) {

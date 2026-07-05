@@ -63,7 +63,7 @@ class _StudyScreenState extends ConsumerState<StudyScreen> {
       return const Center(child: Text('생성된 문제가 없어요.'));
     }
 
-    if (question.type == QuizQuestionType.fillBlank && _textController.text != session.selectedAnswer) {
+    if ((question.type == QuizQuestionType.shortAnswer || question.type == QuizQuestionType.fillBlank) && _textController.text != session.selectedAnswer) {
       _textController.text = session.selectedAnswer;
       _textController.selection = TextSelection.fromPosition(TextPosition(offset: _textController.text.length));
     }
@@ -377,12 +377,14 @@ class _AnswerInput extends StatelessWidget {
             ],
           ],
         ),
-      QuizQuestionType.ox => Row(
-          children: [
-            Expanded(child: _ChoiceButton(index: 0, label: 'O', selected: selectedAnswer == 'O', enabled: enabled, onTap: () => onChanged('O'))),
-            const SizedBox(width: 10),
-            Expanded(child: _ChoiceButton(index: 1, label: 'X', selected: selectedAnswer == 'X', enabled: enabled, onTap: () => onChanged('X'))),
-          ],
+      QuizQuestionType.shortAnswer => SizedBox(
+          height: 56,
+          child: TextField(
+            controller: textController,
+            enabled: enabled,
+            decoration: const InputDecoration(labelText: '?뺣떟 ?낅젰'),
+            onChanged: onChanged,
+          ),
         ),
       QuizQuestionType.fillBlank => SizedBox(
           height: 56,

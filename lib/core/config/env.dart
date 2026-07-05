@@ -10,6 +10,23 @@ class Env {
 
   static String get appEnv => dotenv.env['APP_ENV'] ?? 'local';
 
+  static bool get isProduction {
+    final value = appEnv.toLowerCase().trim();
+    return value == 'production' || value == 'prod';
+  }
+
+  static bool get shouldShowOnboarding {
+    if (isProduction) {
+      return true;
+    }
+
+    final value = dotenv.env['SHOW_ONBOARDING']?.toLowerCase().trim();
+    if (value == null || value.isEmpty) {
+      return false;
+    }
+    return value == 'true' || value == '1' || value == 'yes' || value == 'on';
+  }
+
   static bool get hasSupabaseConfig {
     return supabaseUrl.isNotEmpty && supabasePublishableKey.isNotEmpty;
   }

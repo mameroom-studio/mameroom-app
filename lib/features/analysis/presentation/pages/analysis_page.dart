@@ -46,9 +46,9 @@ class _AnalysisPageState extends ConsumerState<AnalysisPage> {
 
     final state = ref.watch(analysisControllerProvider);
     final progress = state.asData?.value;
-    final isDuplicateUpload = _isDuplicateUploadError(state.error);
+    final errorKind = _analysisErrorKind(state.error);
     final currentStatus = progress?.status ?? MaterialAnalysisStatus.uploaded;
-    final displayStatus = state.hasError && !isDuplicateUpload ? MaterialAnalysisStatus.failed : currentStatus;
+    final displayStatus = state.hasError && errorKind != _AnalysisErrorKind.duplicate ? MaterialAnalysisStatus.failed : currentStatus;
 
     return MameroomShell(
       showSparkles: false,
@@ -76,7 +76,7 @@ class _AnalysisPageState extends ConsumerState<AnalysisPage> {
                 const SizedBox(height: 24),
                 _BottomAction(
                   progress: progress,
-                  isDuplicateUpload: isDuplicateUpload,
+                  isDuplicateUpload: errorKind == _AnalysisErrorKind.duplicate,
                   onLibrary: () => context.go(LibraryPage.routePath),
                   onQuiz: () {
                     if (widget.materialId != null && widget.materialId!.isNotEmpty) {
@@ -89,11 +89,9 @@ class _AnalysisPageState extends ConsumerState<AnalysisPage> {
     );
   }
 
-  bool _isDuplicateUploadError(Object? error) {
-    final message = error?.toString().toLowerCase() ?? '';
-    return message.contains('same file hash') ||
-        message.contains('already has an analysis job') ||
-        message.contains('409');
+  _AnalysisErrorKind _analysisErrorKind(Object? error) {
+    final message = error?.toString() ?? '';
+    return _classifyAnalysisError(message);
   }
 
   double? _progressValue(AsyncValue<AnalysisProgress?> state, AnalysisProgress? progress) {
@@ -307,17 +305,16 @@ class _AnalysisMessage extends StatelessWidget {
   final AnalysisProgress? progress;
   final VoidCallback onOpenLibrary;
 
-  bool _isDuplicateUploadMessage(String message) {
-    final lower = message.toLowerCase();
-    return lower.contains('same file hash') || lower.contains('already has an analysis job') || lower.contains('409');
-  }
+
 
   @override
   Widget build(BuildContext context) {
     final colors = context.mameroom;
     if (state.hasError) {
       final message = state.error.toString();
-      final isDuplicateUpload = _isDuplicateUploadMessage(message);
+      final errorKind = _classifyAnalysisError(message);
+      final isDuplicateUpload = errorKind == _AnalysisErrorKind.duplicate;
+      final isConceptsEmpty = errorKind == _AnalysisErrorKind.conceptsEmpty;
       return _AnalysisCard(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -328,7 +325,11 @@ class _AnalysisMessage extends StatelessWidget {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    isDuplicateUpload ? '이미 업로드된 자료입니다' : '분석에 실패했어요',
+                    isDuplicateUpload
+                        ? '이미 업로드된 자료입니다'
+                        : isConceptsEmpty
+                            ? '문제를 만들 핵심 개념을 찾지 못했어요.'
+                            : '분석에 실패했어요',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
@@ -338,7 +339,9 @@ class _AnalysisMessage extends StatelessWidget {
             Text(
               isDuplicateUpload
                   ? '같은 파일의 분석이 이미 진행 중이거나 완료되었습니다. 라이브러리에서 기존 자료를 이어서 학습할 수 있습니다.'
-                  : message,
+                  : isConceptsEmpty
+                      ? '문서에서 시험 문제로 만들 수 있는 핵심 개념이 충분히 추출되지 않았습니다. 원본 오류: $message'
+                      : message,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: colors.muted),
             ),
             if (isDuplicateUpload) ...[
@@ -467,4 +470,22 @@ class _AnalysisCard extends StatelessWidget {
       child: child,
     );
   }
+}
+
+
+enum _AnalysisErrorKind { duplicate, conceptsEmpty, other }
+
+_AnalysisErrorKind _classifyAnalysisError(String message) {
+  final upper = message.toUpperCase();
+  final lower = message.toLowerCase();
+  if (upper.contains('CONCEPTS_EMPTY') || upper.contains('CONCEPTS_INSUFFICIENT')) {
+    return _AnalysisErrorKind.conceptsEmpty;
+  }
+  if (upper.contains('DUPLICATE_MATERIAL') ||
+      upper.contains('DUPLICATE_ANALYSIS_IN_PROGRESS') ||
+      upper.contains('CACHE_REUSED') ||
+      lower.contains('same file hash already has an analysis job')) {
+    return _AnalysisErrorKind.duplicate;
+  }
+  return _AnalysisErrorKind.other;
 }

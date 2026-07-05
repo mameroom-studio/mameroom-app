@@ -13,10 +13,11 @@ final sharedPreferencesProvider = FutureProvider<SharedPreferences>((ref) {
 final hasSeenOnboardingProvider = FutureProvider<bool>((ref) async {
   final preferences = await ref.watch(sharedPreferencesProvider.future);
   final user = ref.watch(currentUserProvider).asData?.value;
+  final globalSeen = preferences.getBool(_globalOnboardingKey) ?? false;
   if (user != null) {
-    return preferences.getBool(_userOnboardingKey(user.id)) ?? false;
+    return preferences.getBool(_userOnboardingKey(user.id)) ?? globalSeen;
   }
-  return preferences.getBool(_globalOnboardingKey) ?? false;
+  return globalSeen;
 });
 
 final onboardingControllerProvider = Provider<OnboardingController>((ref) {

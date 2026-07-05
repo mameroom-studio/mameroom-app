@@ -37,6 +37,8 @@ class QuizRemoteDataSource {
         .eq('user_id', user.id)
         .eq('material_id', materialId)
         .eq('initial_batch', true)
+        .neq('type', 'ox')
+        .inFilter('type', const ['short_answer', 'multiple_choice', 'fill_blank'])
         .order('order_index', ascending: true)
         .limit(10);
 

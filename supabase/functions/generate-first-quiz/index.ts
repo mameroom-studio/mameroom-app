@@ -5,6 +5,9 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const MIN_USABLE_CONCEPTS = 5;
+const MAX_QUESTIONS_PER_CONCEPT = 2;
+
 type Material = {
   id: string;
   user_id: string;
@@ -26,7 +29,7 @@ type ConceptRow = {
 };
 
 type QuizQuestion = {
-  type: "multiple_choice" | "ox" | "fill_blank";
+  type: "short_answer" | "multiple_choice" | "fill_blank";
   concept_id: string;
   section_id: string | null;
   question_text: string;
@@ -121,8 +124,18 @@ Deno.serve(async (req) => {
     }
 
     const concepts = filterUsableConcepts(await loadConcepts(supabase, authData.user.id, material.id));
-    if (concepts.length === 0) {
-      throw new AppError("CONCEPTS_EMPTY", "No usable concept text found for this material. Concepts with empty names or internal IDs were excluded.", 409);
+    logStep("quiz.concepts.usable", {
+      materialId: material.id,
+      usableConceptCount: concepts.length,
+      concepts: concepts.map((concept) => ({
+        id: concept.id,
+        name: concept.name,
+        importance_score: concept.importance_score,
+        concept_type: concept.concept_type,
+      })),
+    });
+    if (concepts.length < MIN_USABLE_CONCEPTS) {
+      throw new AppError("CONCEPTS_EMPTY", `Only ${concepts.length} usable concepts found for this material. At least ${MIN_USABLE_CONCEPTS} are required for MVP quiz generation.`, 422);
     }
 
     const cachedBySourceHash = await loadQuestionsBySourceHash(
@@ -184,7 +197,7 @@ Deno.serve(async (req) => {
     const serialized = serializeError(error);
     logStep("quiz.error", { materialId: activeMaterialId, error: serialized });
     if (activeSupabase && activeMaterialId) {
-      await markMaterialFailed(activeSupabase, activeMaterialId, serialized.message);
+      await markMaterialFailed(activeSupabase, activeMaterialId, `${serialized.code}: ${serialized.message}`);
     }
     return errorJson(error, activeMaterialId);
   }
@@ -251,6 +264,8 @@ async function loadQuestionsByMaterial(
     .eq("user_id", userId)
     .eq("material_id", materialId)
     .eq("initial_batch", true)
+    .neq("type", "ox")
+    .in("type", ["short_answer", "multiple_choice"])
     .order("order_index", { ascending: true });
 
   if (error) throw new AppError("DB_QUERY_FAILED", "Database query failed.", 500, error);
@@ -270,6 +285,8 @@ async function loadQuestionsBySourceHash(
     .eq("source_hash", sourceHash)
     .neq("material_id", excludeMaterialId)
     .eq("initial_batch", true)
+    .neq("type", "ox")
+    .in("type", ["short_answer", "multiple_choice"])
     .order("order_index", { ascending: true })
     .limit(10);
 
@@ -307,7 +324,7 @@ async function copyCachedQuestions({
     type: question.type,
     question_text: koreanVisibleText(question.question_text),
     options: question.type === "multiple_choice" ? sanitizeOptions(Array.isArray(question.options) ? question.options : [], sanitizeLearningTerm(question.answer) ?? "") : [],
-    answer: question.type === "ox" ? sanitizeOxAnswer(question.answer) : sanitizeLearningTerm(question.answer),
+    answer: sanitizeLearningTerm(question.answer),
     explanation: koreanVisibleText(question.explanation),
     evidence: { text: koreanVisibleText(evidenceToText(question.evidence)) },
     difficulty: question.difficulty ?? 3,
@@ -317,6 +334,7 @@ async function copyCachedQuestions({
   }).filter((row): row is Record<string, unknown> => {
     if (row === null) return false;
     if (!row.question_text || !row.answer || !row.explanation) return false;
+    if (row.type !== "short_answer" && row.type !== "multiple_choice") return false;
     if (row.type === "multiple_choice" && (!Array.isArray(row.options) || row.options.length !== 4 || !row.options.includes(row.answer))) return false;
     return true;
   });
@@ -330,10 +348,11 @@ async function copyCachedQuestions({
   return rows.length;
 }
 
-const requiredQuestionMix: Record<QuizQuestion["type"], number> = {
-  multiple_choice: 5,
-  ox: 3,
-  fill_blank: 2,
+const generatedQuestionTypes = ["short_answer", "multiple_choice"] as const;
+
+const requiredQuestionMix: Record<(typeof generatedQuestionTypes)[number], number> = {
+  short_answer: 7,
+  multiple_choice: 3,
 };
 
 async function generateQuestionsWithOpenAi({
@@ -355,21 +374,25 @@ async function generateQuestionsWithOpenAi({
       concepts,
       attempt,
     });
-    logQuestionMix("quiz.openai.question_mix", questions, { attempt });
+    const repairedQuestions = repairQuestionMixWithFallback(questions, concepts);
+    logQuestionMix("quiz.openai.question_mix", questions, {
+      attempt,
+      repairedMix: countQuestionMix(repairedQuestions),
+    });
 
-    if (isQuestionMixValid(questions)) {
-      return takeRequiredQuestionMix(questions);
+    if (isQuestionMixValid(repairedQuestions)) {
+      return takeRequiredQuestionMix(repairedQuestions);
     }
 
-    if (questionMixScore(questions) > questionMixScore(bestQuestions)) {
-      bestQuestions = questions;
+    if (questionMixScore(repairedQuestions) > questionMixScore(bestQuestions)) {
+      bestQuestions = repairedQuestions;
     }
 
     if (attempt === 1) {
       logStep("quiz.openai.retry", {
         reason: "QUESTION_MIX_INVALID",
         attempt,
-        mix: countQuestionMix(questions),
+        mix: countQuestionMix(repairedQuestions),
       });
     }
   }
@@ -377,7 +400,7 @@ async function generateQuestionsWithOpenAi({
   logQuestionMix("quiz.openai.invalid_final_mix", bestQuestions, {
     reason: "QUESTION_MIX_INVALID",
   });
-  throw new AppError("QUESTION_MIX_INVALID", "AI2 did not return a valid 10-question quiz. No fallback questions were generated.", 502, countQuestionMix(bestQuestions));
+  throw new AppError("QUESTION_MIX_INVALID", "AI2 did not return enough valid concepts to build a safe 10-question quiz.", 502, countQuestionMix(bestQuestions));
 }
 
 async function requestQuestionsFromOpenAi({
@@ -406,7 +429,7 @@ async function requestQuestionsFromOpenAi({
           content: [
             {
               type: "input_text",
-              text: "Generate an initial quiz only from provided concepts. Return JSON only. The JSON must contain exactly 10 questions: 5 multiple_choice, 3 ox, and 2 fill_blank. All user-visible question_text, options, answer explanations, hints, and evidence summaries must be written in Korean. Keep domain acronyms such as IFRS17, ALM, and K-ICS as acronyms, but write surrounding explanations in Korean. Do not invent unsupported facts. Never include UUIDs, database IDs, material IDs, storage paths, source hashes, or concept IDs in user-visible text.",
+              text: "Generate an initial quiz only from provided concepts. Return JSON only. The JSON must contain exactly 10 questions: 7 short_answer and 3 multiple_choice. Do not generate ox questions. Do not generate fill_blank questions for the first quiz batch. All user-visible question_text, options, answer, explanations, hints, and evidence summaries must be written in Korean. Keep domain acronyms such as IFRS17, ALM, and K-ICS as acronyms, but write surrounding explanations in Korean. Do not invent unsupported facts. CRITICAL: Never include UUID, concept_id, material_id, database id, storage path, source hash, file hash, or any internal identifier in user-visible text. concept.id is only for the concept_id JSON field.",
             },
           ],
         },
@@ -476,9 +499,10 @@ function quizPrompt(materialTitle: string, concepts: ConceptRow[], attempt = 1) 
 Task:
 Create exactly 10 original study questions from the concepts below.
 The questions array must contain exactly this distribution:
-- exactly 5 questions with "type":"multiple_choice"
-- exactly 3 questions with "type":"ox"
-- exactly 2 questions with "type":"fill_blank"
+- exactly 7 questions with "type":"short_answer"
+- exactly 3 questions with "type":"multiple_choice"
+- exactly 0 questions with "type":"ox"
+- exactly 0 questions with "type":"fill_blank" for this first quiz batch
 
 Rules:
 - Return one JSON object only. No markdown. No code fences. No commentary.
@@ -487,19 +511,22 @@ Rules:
 - Prioritize concepts with higher importance_score.
 - Use concept_type to write suitable exam-style questions.
 - Every question must reference one valid concept_id from the input.
+- Use each concept_id in at most 2 questions.
 - Use concept_id only in the concept_id JSON field for database mapping.
-- Never include UUIDs, database IDs, material IDs, concept IDs, or internal identifiers in question_text, options, answer, explanation, or evidence.
+- Never include UUID, concept_id, material_id, database id, storage path, source hash, file hash, file path, or any internal identifier in question_text, options, answer, explanation, hint, or evidence.
+- Never copy concept.id into any user-visible field.
 - Options and answers must be human-readable Korean study terms or short domain acronyms, not IDs.
-- All question_text, options, answer explanations, and evidence summaries must be Korean. Domain acronyms such as IFRS17, ALM, and K-ICS may remain as acronyms.
+- All question_text, options, answer, hints, explanations, and evidence summaries must be Korean. Domain acronyms such as IFRS17, ALM, and K-ICS may remain as acronyms.
 - section_id must be null if no section id is available.
 - difficulty must be an integer from 1 to 5.
-- multiple_choice must include exactly 4 options and one answer that matches an option.
-- ox answer must be either O or X.
-- fill_blank question_text must include ____.
+- short_answer must ask for a concise Korean answer and must not include answer options.
+- multiple_choice must include exactly 4 Korean options and one answer that matches an option.
+- ox is prohibited.
+- fill_blank remains a legacy supported type, but must not be generated in the first quiz batch.
 - Do not copy existing textbook questions.
 - If this is retry attempt ${attempt}, strictly repair the question type distribution and keep only valid questions.
 - Return JSON only with this exact shape:
-{"questions":[{"type":"multiple_choice","concept_id":"VALID_INPUT_CONCEPT_ID","section_id":null,"question_text":"...","options":["..."],"answer":"...","explanation":"...","evidence":"...","difficulty":3}]}
+{"questions":[{"type":"short_answer","concept_id":"VALID_INPUT_CONCEPT_ID","section_id":null,"question_text":"...","options":[],"answer":"...","explanation":"...","evidence":"...","difficulty":3}]}
 
 Concepts:
 ${JSON.stringify(compactConcepts)}`;
@@ -533,9 +560,8 @@ function candidateJsonStrings(value: string) {
 
 function countQuestionMix(questions: QuizQuestion[]) {
   return {
-    total: questions.length,
+    short_answer: questions.filter((question) => question.type === "short_answer").length,
     multiple_choice: questions.filter((question) => question.type === "multiple_choice").length,
-    ox: questions.filter((question) => question.type === "ox").length,
     fill_blank: questions.filter((question) => question.type === "fill_blank").length,
   };
 }
@@ -550,24 +576,144 @@ function logQuestionMix(step: string, questions: QuizQuestion[], details: Record
 
 function isQuestionMixValid(questions: QuizQuestion[]) {
   const mix = countQuestionMix(questions);
-  return mix.total === 10 &&
+  return questions.length === 10 &&
+    mix.short_answer === requiredQuestionMix.short_answer &&
     mix.multiple_choice === requiredQuestionMix.multiple_choice &&
-    mix.ox === requiredQuestionMix.ox &&
-    mix.fill_blank === requiredQuestionMix.fill_blank;
+    mix.fill_blank === 0 &&
+    respectsConceptQuestionLimit(questions);
 }
 
 function questionMixScore(questions: QuizQuestion[]) {
   const mix = countQuestionMix(questions);
-  return Math.min(mix.multiple_choice, requiredQuestionMix.multiple_choice) +
-    Math.min(mix.ox, requiredQuestionMix.ox) +
-    Math.min(mix.fill_blank, requiredQuestionMix.fill_blank);
+  const conceptLimitPenalty = respectsConceptQuestionLimit(questions) ? 0 : -2;
+  return Math.min(mix.short_answer, requiredQuestionMix.short_answer) +
+    Math.min(mix.multiple_choice, requiredQuestionMix.multiple_choice) +
+    conceptLimitPenalty;
 }
 
 function takeRequiredQuestionMix(questions: QuizQuestion[]) {
-  return (["multiple_choice", "ox", "fill_blank"] as QuizQuestion["type"][])
-    .flatMap((type) => questions
-      .filter((question) => question.type === type)
-      .slice(0, requiredQuestionMix[type]));
+  const selected: QuizQuestion[] = [];
+  const usage = new Map<string, number>();
+
+  for (const type of generatedQuestionTypes) {
+    for (const question of questions.filter((candidate) => candidate.type === type)) {
+      if (selected.filter((candidate) => candidate.type === type).length >= requiredQuestionMix[type]) break;
+      const used = usage.get(question.concept_id) ?? 0;
+      if (used >= MAX_QUESTIONS_PER_CONCEPT) continue;
+      usage.set(question.concept_id, used + 1);
+      selected.push(question);
+    }
+  }
+
+  return selected;
+}
+
+function repairQuestionMixWithFallback(questions: QuizQuestion[], concepts: ConceptRow[]) {
+  const result = takeRequiredQuestionMix(questions);
+  const existingKeys = new Set(result.map((question) => question.type + ":" + question.concept_id));
+
+  for (const type of generatedQuestionTypes) {
+    while (result.filter((question) => question.type === type).length < requiredQuestionMix[type]) {
+      const fallback = fallbackQuestion(type, concepts, result.length, existingKeys);
+      if (!fallback) break;
+      result.push(fallback);
+      existingKeys.add(fallback.type + ":" + fallback.concept_id);
+    }
+  }
+
+  return takeRequiredQuestionMix(result);
+}
+
+function conceptQuestionCount(conceptId: string, existingKeys: Set<string>) {
+  return [...existingKeys].filter((key) => key.endsWith(":" + conceptId)).length;
+}
+
+function respectsConceptQuestionLimit(questions: QuizQuestion[]) {
+  const usage = new Map<string, number>();
+  for (const question of questions) {
+    const count = (usage.get(question.concept_id) ?? 0) + 1;
+    if (count > MAX_QUESTIONS_PER_CONCEPT) return false;
+    usage.set(question.concept_id, count);
+  }
+  return true;
+}
+
+function fallbackQuestion(
+  type: QuizQuestion["type"],
+  concepts: ConceptRow[],
+  index: number,
+  existingKeys: Set<string>,
+): QuizQuestion | null {
+  const concept = concepts.find((candidate) => {
+    const key = type + ":" + candidate.id;
+    return !existingKeys.has(key) && conceptQuestionCount(candidate.id, existingKeys) < MAX_QUESTIONS_PER_CONCEPT;
+  });
+  if (!concept) return null;
+
+  const answer = safeConceptName(concept);
+  if (!answer || containsInternalIdentifier(answer)) return null;
+  const description = koreanVisibleText(concept.description) || "업로드된 학습 자료에서 중요한 핵심 개념입니다.";
+  const evidence = koreanVisibleText(evidenceToText(concept.evidence)) || description;
+  const difficulty = Math.max(1, Math.min(5, Math.round(Number(concept.importance) || 3)));
+
+  if (type === "multiple_choice") {
+    const options = fallbackOptions(answer, concepts);
+    if (options.length !== 4) return null;
+    return {
+      type,
+      concept_id: concept.id,
+      section_id: null,
+      question_text: answer + "의 핵심 의미로 가장 적절한 것은 무엇인가요?",
+      options,
+      answer,
+      explanation: answer + "은(는) 학습 자료에서 중요하게 다룬 개념입니다. " + description,
+      evidence,
+      difficulty,
+    };
+  }
+
+  return {
+    type: "short_answer",
+    concept_id: concept.id,
+    section_id: null,
+    question_text: answer + "의 핵심 의미는 무엇인가요?",
+    options: [],
+    answer,
+    explanation: answer + "은(는) 학습 자료에서 중요하게 다룬 핵심 개념입니다. " + description,
+    evidence,
+    difficulty,
+  };
+}
+
+function fallbackOptions(answer: string, concepts: ConceptRow[]) {
+  const seen = new Set<string>([answer.toLowerCase()]);
+  const options = [answer];
+  for (const concept of concepts) {
+    const term = sanitizeLearningTerm(concept.name);
+    if (!term) continue;
+    const key = term.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    options.push(term);
+    if (options.length === 4) break;
+  }
+
+  for (const term of ["보험계약", "위험관리", "책임준비금", "지급여력"]) {
+    if (options.length === 4) break;
+    const safeTerm = sanitizeLearningTerm(term);
+    if (!safeTerm) continue;
+    const key = safeTerm.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    options.push(safeTerm);
+  }
+
+  const distractors = deterministicShuffle(options.filter((option) => option !== answer)).slice(0, 3);
+  return deterministicShuffle([answer, ...distractors]);
+}
+
+function deterministicShuffle(values: string[]) {
+  return [...values].sort((a, b) => a.length - b.length || a.localeCompare(b));
 }
 
 function evidenceToText(value: unknown): string {
@@ -584,17 +730,20 @@ function normalizeQuestion(value: unknown, concepts: ConceptRow[]): QuizQuestion
   if (!value || typeof value !== "object") return null;
   const raw = value as Record<string, unknown>;
   const type = raw.type;
-  if (type !== "multiple_choice" && type !== "ox" && type !== "fill_blank") return null;
+  if (type !== "short_answer" && type !== "multiple_choice" && type !== "fill_blank") return null;
+  if (type === "fill_blank") return null;
 
   const conceptId = typeof raw.concept_id === "string" ? raw.concept_id : "";
   const concept = concepts.find((concept) => concept.id === conceptId);
   if (!concept) return null;
 
+  if (hasInternalIdentifierInQuestionPayload(raw)) {
+    return null;
+  }
+
   const conceptName = safeConceptName(concept);
   let questionText = koreanVisibleText(raw.question_text);
-  let answer = type === "ox"
-    ? sanitizeOxAnswer(raw.answer)
-    : sanitizeLearningTerm(raw.answer) ?? conceptName;
+  let answer = sanitizeLearningTerm(raw.answer) ?? conceptName;
   const explanation = koreanVisibleText(raw.explanation);
   const evidence = koreanVisibleText(raw.evidence);
   if (!questionText || !answer || !explanation || !evidence) return null;
@@ -602,10 +751,6 @@ function normalizeQuestion(value: unknown, concepts: ConceptRow[]): QuizQuestion
   const rawOptions = Array.isArray(raw.options) ? raw.options : [];
   const options = type === "multiple_choice" ? sanitizeOptions(rawOptions, answer) : [];
   if (type === "multiple_choice" && (options.length !== 4 || !options.includes(answer))) return null;
-  if (type === "ox" && answer !== "O" && answer !== "X") return null;
-  if (type === "fill_blank" && !questionText.includes("____")) {
-    questionText = `____?/??${questionText}`;
-  }
 
   return {
     type,
@@ -618,6 +763,19 @@ function normalizeQuestion(value: unknown, concepts: ConceptRow[]): QuizQuestion
     evidence,
     difficulty: Math.max(1, Math.min(5, Math.round(Number(raw.difficulty) || 3))),
   };
+}
+
+function hasInternalIdentifierInQuestionPayload(raw: Record<string, unknown>) {
+  const valuesToCheck = [
+    raw.question_text,
+    raw.answer,
+    raw.explanation,
+    raw.evidence,
+    raw.hint,
+    raw.hints,
+    ...(Array.isArray(raw.options) ? raw.options : []),
+  ];
+  return valuesToCheck.some((value) => containsInternalIdentifier(stringFromUnknown(value)));
 }
 
 function sanitizeOptions(
@@ -652,10 +810,6 @@ function koreanVisibleText(value: unknown) {
   return sanitized;
 }
 
-function sanitizeOxAnswer(value: unknown) {
-  const sanitized = sanitizeVisibleText(value).toUpperCase();
-  return sanitized === "O" || sanitized === "X" ? sanitized : "O";
-}
 
 function sanitizeLearningTerm(value: unknown) {
   const original = stringFromUnknown(value);
@@ -663,7 +817,7 @@ function sanitizeLearningTerm(value: unknown) {
   const sanitized = sanitizeVisibleText(original);
   if (!sanitized) return null;
   if (containsInternalIdentifier(sanitized)) return null;
-  if (!/[A-Za-z媛-??/.test(sanitized)) return null;
+  if (!/[A-Za-z가-힣]/.test(sanitized)) return null;
   if (looksLikeStoragePath(sanitized)) return null;
   if (!isAllowedLearningTerm(sanitized)) return null;
   if (sanitized.length > 80) return null;
@@ -693,15 +847,44 @@ function containsInternalIdentifier(value: string) {
 }
 
 function hasKorean(value: string) {
-  return /[媛-??/.test(value);
+  return /[가-힣]/.test(value);
 }
 
 function isAllowedLearningTerm(value: string) {
+  if (isGenericLearningTerm(value)) return false;
   if (hasKorean(value)) return true;
   const compact = value.trim();
   if (/^[A-Z0-9][A-Z0-9+./&-]{1,24}$/.test(compact)) return true;
   if (/^[A-Z][A-Za-z0-9+./&-]{1,24}$/.test(compact) && !/\s/.test(compact)) return true;
   return false;
+}
+
+function isGenericLearningTerm(value: string) {
+  const compact = value.replace(/\s+/g, "").toLowerCase();
+  return new Set([
+    "개념",
+    "자료",
+    "문서",
+    "내용",
+    "정보",
+    "파일",
+    "업로드",
+    "분석",
+    "텍스트",
+    "데이터",
+    "페이지",
+    "문제",
+    "정답",
+    "설명",
+    "학습",
+    "항목",
+    "예시",
+    "test",
+    "material",
+    "document",
+    "file",
+    "data",
+  ]).has(compact);
 }
 
 function looksLikeStoragePath(value: string) {
@@ -743,7 +926,7 @@ function isQuestionWorthyConceptType(value: unknown) {
 }
 
 function safeConceptName(concept: ConceptRow) {
-  return sanitizeLearningTerm(concept.name) ?? "?듭떖 媛쒕뀗";
+  return sanitizeLearningTerm(concept.name) ?? "핵심 개념";
 }
 
 function stringFromUnknown(value: unknown): string {
@@ -757,11 +940,11 @@ function stringFromUnknown(value: unknown): string {
   }
 }
 function validateQuestionMix(questions: QuizQuestion[]) {
+  const shortAnswer = questions.filter((question) => question.type === "short_answer").length;
   const multipleChoice = questions.filter((question) => question.type === "multiple_choice").length;
-  const ox = questions.filter((question) => question.type === "ox").length;
   const fillBlank = questions.filter((question) => question.type === "fill_blank").length;
-  if (questions.length !== 10 || multipleChoice !== 5 || ox !== 3 || fillBlank !== 2) {
-    throw new AppError("QUESTION_MIX_INVALID", "AI2 must generate exactly 5 multiple_choice, 3 ox, and 2 fill_blank questions.", 502);
+  if (questions.length !== 10 || shortAnswer !== 7 || multipleChoice !== 3 || fillBlank !== 0) {
+    throw new AppError("QUESTION_MIX_INVALID", "AI2 must generate exactly 7 short_answer and 3 multiple_choice questions. ox and fill_blank are not allowed in the first quiz batch.", 502);
   }
 }
 
@@ -917,6 +1100,8 @@ function json(value: unknown, status = 200) {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
+
+
 
 
 

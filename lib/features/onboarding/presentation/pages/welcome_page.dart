@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -21,66 +21,83 @@ class WelcomePage extends ConsumerStatefulWidget {
 class _WelcomePageState extends ConsumerState<WelcomePage> {
   static const _steps = <_OnboardingStep>[
     _OnboardingStep(
-      title: '공부할 파일만 넣으면',
-      description: '마메룸이 핵심 개념을 찾고\n기억에 남는 문제로 바꿔줘요.',
-      buttonLabel: '마메룸 시작하기',
+      title: '공부는 금방 잊혀집니다.',
+      icon: '📚',
+      description: '오늘 공부한 내용,\n얼마나 기억하고 계신가요?',
+    ),
+    _OnboardingStep(
+      title: 'AI가 기억을 만들어줍니다.',
+      icon: '🧠',
+      description: 'PDF를 업로드하면\nAI가 기억 문제를 생성합니다.',
+    ),
+    _OnboardingStep(
+      title: '기억은 씨앗이 됩니다.',
+      icon: '🌱',
+      description: '하나의 기억은\n하나의 씨앗이 됩니다.',
+    ),
+    _OnboardingStep(
+      title: '당신만의 방이 성장합니다.',
+      icon: '🏠',
+      description: '공부가 기록이 되고,\n기록이 추억이 됩니다.',
+    ),
+    _OnboardingStep(
+      title: '당신의 첫 기억을 심어볼까요?',
+      icon: '🌱',
+      description: '',
+      isFinal: true,
     ),
   ];
 
+  late final PageController _pageController;
   var _isCompleting = false;
   int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final step = _steps[_currentIndex];
     return MameroomShell(
-      child: Column(
-        children: [
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: _isCompleting ? null : _completeOnboarding,
-              child: const Text('건너뛰기'),
-            ),
-          ),
-          const PixelLamp(size: 84),
-          const SizedBox(height: 16),
-          Text(
-            '나만의 기억 방을 만들어요',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const SizedBox(height: 14),
-          Text(
-            step.title,
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.headlineMedium,
-          ),
-          const SizedBox(height: 14),
-          Text(
-            step.description,
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyLarge,
-          ),
-          const SizedBox(height: 18),
-          Expanded(
-            child: Align(
-              alignment: Alignment.bottomCenter,
-              child: FractionallySizedBox(
-                widthFactor: 0.95,
-                child: PixelRoomScene(showFurniture: true),
+      child: SafeArea(
+        child: Column(
+          children: [
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _isCompleting ? null : _finishOnboarding,
+                child: const Text('건너뛰기'),
               ),
             ),
-          ),
-          const SizedBox(height: 18),
-          MameroomPrimaryButton(
-            label: step.buttonLabel,
-            isLoading: _isCompleting,
-            onPressed: _completeOnboarding,
-          ),
-          const SizedBox(height: 18),
-          MameroomDots(count: _steps.length, activeIndex: _currentIndex),
-        ],
+            Expanded(
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: _steps.length,
+                onPageChanged: (index) => setState(() => _currentIndex = index),
+                itemBuilder: (context, index) {
+                  return _OnboardingPanel(step: _steps[index]);
+                },
+              ),
+            ),
+            const SizedBox(height: 18),
+            MameroomPrimaryButton(
+              label: step.isFinal ? '시작하기' : '다음',
+              isLoading: _isCompleting,
+              onPressed: _completeOnboarding,
+            ),
+            const SizedBox(height: 18),
+            MameroomDots(count: _steps.length, activeIndex: _currentIndex),
+          ],
+        ),
       ),
     );
   }
@@ -90,10 +107,20 @@ class _WelcomePageState extends ConsumerState<WelcomePage> {
       return;
     }
     if (_currentIndex < _steps.length - 1) {
-      setState(() => _currentIndex += 1);
+      await _pageController.nextPage(
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+      );
       return;
     }
 
+    await _finishOnboarding();
+  }
+
+  Future<void> _finishOnboarding() async {
+    if (_isCompleting) {
+      return;
+    }
     setState(() => _isCompleting = true);
     await ref.read(onboardingControllerProvider).complete();
     if (!mounted) {
@@ -108,11 +135,74 @@ class _WelcomePageState extends ConsumerState<WelcomePage> {
 class _OnboardingStep {
   const _OnboardingStep({
     required this.title,
+    required this.icon,
     required this.description,
-    required this.buttonLabel,
+    this.isFinal = false,
   });
 
   final String title;
+  final String icon;
   final String description;
-  final String buttonLabel;
+  final bool isFinal;
+}
+
+class _OnboardingPanel extends StatelessWidget {
+  const _OnboardingPanel({required this.step});
+
+  final _OnboardingStep step;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxHeight < 560;
+        return SingleChildScrollView(
+          physics: const ClampingScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SizedBox(height: compact ? 8 : 18),
+                Text(
+                  step.title,
+                  textAlign: TextAlign.center,
+                  style: textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
+                    height: 1.18,
+                  ),
+                ),
+                SizedBox(height: compact ? 18 : 28),
+                Text(
+                  step.icon,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: compact ? 58 : 74, height: 1),
+                ),
+                SizedBox(height: compact ? 18 : 28),
+                if (step.description.isNotEmpty)
+                  Text(
+                    step.description,
+                    textAlign: TextAlign.center,
+                    style: textTheme.titleLarge?.copyWith(
+                      height: 1.45,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                SizedBox(height: compact ? 20 : 34),
+                FractionallySizedBox(
+                  widthFactor: compact ? 0.72 : 0.88,
+                  child: PixelRoomScene(
+                    progress: step.isFinal ? 1 : 0.28,
+                    showFurniture: step.isFinal,
+                  ),
+                ),
+                SizedBox(height: compact ? 8 : 18),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
 }

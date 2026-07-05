@@ -1,6 +1,6 @@
 enum QuizQuestionType {
+  shortAnswer('short_answer'),
   multipleChoice('multiple_choice'),
-  ox('ox'),
   fillBlank('fill_blank');
 
   const QuizQuestionType(this.value);
@@ -10,7 +10,7 @@ enum QuizQuestionType {
   static QuizQuestionType fromValue(String value) {
     return QuizQuestionType.values.firstWhere(
       (type) => type.value == value,
-      orElse: () => QuizQuestionType.multipleChoice,
+      orElse: () => QuizQuestionType.shortAnswer,
     );
   }
 }

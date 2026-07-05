@@ -1,11 +1,9 @@
 ﻿import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../shared/widgets/mameroom_shell.dart';
 import '../../shared/widgets/pixel_placeholders.dart';
-import '../../features/onboarding/presentation/pages/welcome_page.dart';
 
 class SplashPage extends StatefulWidget {
   const SplashPage({super.key});
@@ -26,11 +24,6 @@ class _SplashPageState extends State<SplashPage> {
     _dotTimer = Timer.periodic(const Duration(milliseconds: 360), (_) {
       if (mounted) {
         setState(() => _dotIndex = (_dotIndex + 1) % 3);
-      }
-    });
-    Future<void>.delayed(const Duration(milliseconds: 1450), () {
-      if (mounted) {
-        context.go(WelcomePage.routePath);
       }
     });
   }

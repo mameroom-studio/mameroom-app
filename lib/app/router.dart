@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../core/config/env.dart';
 import '../features/analysis/presentation/pages/analysis_page.dart';
 import '../features/auth/presentation/pages/login_page.dart';
 import '../features/auth/presentation/pages/signup_page.dart';
@@ -33,7 +34,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       }
 
       final isAuthenticated = currentUser.asData?.value != null;
-      final onboardingSeen = hasSeenOnboarding.asData?.value ?? false;
+      final onboardingSeen =
+          !Env.shouldShowOnboarding || (hasSeenOnboarding.asData?.value ?? false);
       final publicRoutes = <String>{
         SplashPage.routePath,
         WelcomePage.routePath,
@@ -45,12 +47,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       };
       final location = state.matchedLocation;
       final isPublicRoute = publicRoutes.contains(location);
+      final isOnboardingReplay = Env.shouldShowOnboarding &&
+          location == WelcomePage.routePath &&
+          state.uri.queryParameters['replay'] == 'true';
 
       if (!isAuthenticated) {
         if (location == SplashPage.routePath) {
           return onboardingSeen ? LoginPage.routePath : WelcomePage.routePath;
         }
-        if (location == WelcomePage.routePath && onboardingSeen) {
+        if (location == WelcomePage.routePath && onboardingSeen && !isOnboardingReplay) {
           return LoginPage.routePath;
         }
         return isPublicRoute ? null : LoginPage.routePath;
@@ -58,6 +63,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 
       if (!onboardingSeen) {
         return location == WelcomePage.routePath ? null : WelcomePage.routePath;
+      }
+
+      if (isOnboardingReplay) {
+        return null;
       }
 
       if (location == SplashPage.routePath ||

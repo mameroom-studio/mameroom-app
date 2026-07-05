@@ -46,6 +46,8 @@ class ReviewRemoteDataSource {
         .select('id,material_id,concept_id,section_id,type,question_text,options,answer,explanation,evidence,difficulty,order_index')
         .eq('user_id', user.id)
         .eq('initial_batch', true)
+        .neq('type', 'ox')
+        .inFilter('type', const ['short_answer', 'multiple_choice', 'fill_blank'])
         .inFilter('material_id', materialIds);
 
     final passFilter = await _loadPassFilter(userId: user.id);

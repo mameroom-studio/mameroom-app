@@ -335,16 +335,14 @@ class _AnswerInput extends StatelessWidget {
             }).toList(growable: false),
           ),
         ),
-      QuizQuestionType.ox => SegmentedButton<String>(
-          segments: const [
-            ButtonSegment(value: 'O', label: Text('O')),
-            ButtonSegment(value: 'X', label: Text('X')),
-          ],
-          selected: selectedAnswer.isEmpty ? const <String>{} : {selectedAnswer},
-          emptySelectionAllowed: true,
-          onSelectionChanged: enabled
-              ? (values) => onChanged(values.isEmpty ? '' : values.first)
-              : null,
+      QuizQuestionType.shortAnswer => TextField(
+          controller: textController,
+          enabled: enabled,
+          decoration: const InputDecoration(
+            labelText: 'Answer',
+            border: OutlineInputBorder(),
+          ),
+          onChanged: onChanged,
         ),
       QuizQuestionType.fillBlank => TextField(
           controller: textController,
