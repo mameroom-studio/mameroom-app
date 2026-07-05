@@ -1,4 +1,5 @@
 ﻿import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import * as pdfjsLib from "https://esm.sh/pdfjs-dist@4.10.38/legacy/build/pdf.mjs?bundle";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6,6 +7,19 @@ const corsHeaders = {
 };
 
 const MIN_USABLE_CONCEPTS = 5;
+const MIN_PDF_TEXT_LENGTH = 300;
+const MATERIALS_BUCKET = "materials";
+const requiredPdfInputTerms = [
+  "ALM",
+  "AiR",
+  "IFRS17",
+  "K-ICS",
+  "ORSA",
+  "DR",
+  "PV 검증",
+  "준비금 검증",
+  "위험률 산출",
+];
 
 type Material = {
   id: string;
@@ -36,6 +50,9 @@ type ErrorCode =
   | "INVALID_REQUEST"
   | "MATERIAL_NOT_FOUND"
   | "DUPLICATE_ANALYSIS_IN_PROGRESS"
+  | "PDF_DOWNLOAD_FAILED"
+  | "PDF_PARSE_FAILED"
+  | "PDF_TEXT_EMPTY"
   | "OPENAI_REQUEST_FAILED"
   | "OPENAI_PARSE_FAILED"
   | "CONCEPTS_EMPTY"
@@ -152,15 +169,34 @@ Deno.serve(async (req) => {
 
     logStep("extract.status.extracting", { materialId: material.id });
     await updateMaterial(supabase, material.id, { status: "extracting" }, authData.user.id);
-    const structuredText = extractStructuredText(material);
+    const extractedText = await extractStructuredText(supabase, material);
+    const structuredText = extractedText.structuredText;
     logStep("extract.text.ready", {
       materialId: material.id,
-      textLength: structuredText.length,
-      textPreview: previewText(structuredText, 500),
+      sourceType: material.source_type,
+      rawTextLength: extractedText.rawText.length,
+      structuredTextLength: structuredText.length,
+      sectionCount: extractedText.sectionCount,
+      openAiInputPreview: previewText(structuredText, 2000),
     });
+
+    if (material.source_type === "pdf") {
+      logStep("extract.pdf.text_ready", {
+        materialId: material.id,
+        textLength: extractedText.rawText.length,
+        structuredLength: structuredText.length,
+        sectionCount: extractedText.sectionCount,
+        textPreview: previewText(structuredText, 800),
+        requiredTermHits: requiredPdfInputTerms.filter((term) => structuredText.includes(term)),
+      });
+      if (!hasRequiredPdfInputSignal(structuredText)) {
+        throw new AppError("PDF_TEXT_EMPTY", "PDF text extraction did not include recognizable document body terms.", 422);
+      }
+    }
 
     await updateMaterial(supabase, material.id, {
       status: "analyzing",
+      raw_text: extractedText.rawText,
       structured_text: structuredText,
     }, authData.user.id);
     logStep("extract.openai.start", { materialId: material.id });
@@ -175,14 +211,26 @@ Deno.serve(async (req) => {
       logStep("extract.concepts.fallback", {
         materialId: material.id,
         conceptCount: conceptsToSave.length,
+        concepts: conceptsToSave.map(conceptLogSummary),
       });
     }
+    const usabilityDiagnostics = conceptUsabilityDiagnostics(conceptsToSave);
     const usableConcepts = usableConceptsForQuiz(conceptsToSave);
     logStep("extract.concepts.quality_gate", {
       materialId: material.id,
       candidateCount: conceptsToSave.length,
       usableCount: usableConcepts.length,
-      usableConceptNames: usableConcepts.map((concept) => concept.name),
+      candidates: conceptsToSave.map(conceptLogSummary),
+      rejectedConcepts: usabilityDiagnostics
+        .filter((diagnostic) => diagnostic.rejection_reason)
+        .map((diagnostic) => ({
+          name: diagnostic.name,
+          rejection_reason: diagnostic.rejection_reason,
+          importance_score: diagnostic.importance_score,
+          concept_type: diagnostic.concept_type,
+          exclusion_reason: diagnostic.exclusion_reason,
+        })),
+      usableConcepts: usableConcepts.map(conceptLogSummary),
     });
     if (usableConcepts.length === 0) {
       throw new AppError("CONCEPTS_EMPTY", "No exam-worthy concepts found after deterministic filtering and importance evaluation.", 422);
@@ -296,19 +344,144 @@ async function copyCachedConcepts(
   return rows.length;
 }
 
-function extractStructuredText(material: Material) {
+type ExtractedMaterialText = {
+  rawText: string;
+  structuredText: string;
+  sectionCount: number;
+};
+
+async function extractStructuredText(
+  supabase: ReturnType<typeof createClient>,
+  material: Material,
+): Promise<ExtractedMaterialText> {
+  if (material.source_type === "pdf") {
+    return extractPdfStructuredText(supabase, material);
+  }
+
   if (material.structured_text?.trim()) {
-    return material.structured_text.trim();
+    const structuredText = material.structured_text.trim();
+    return {
+      rawText: material.raw_text?.trim() || structuredText,
+      structuredText,
+      sectionCount: estimateSectionCount(structuredText),
+    };
   }
 
   if (material.source_type === "text") {
     if (!material.raw_text?.trim()) {
       throw new AppError("INVALID_REQUEST", "Text material does not include raw_text for analysis.", 400);
     }
-    return `Title: ${material.title}\nSource type: text\n\n${material.raw_text.trim()}`;
+    const rawText = normalizeExtractedPdfText(material.raw_text);
+    const structuredText = `Title: ${material.title}\nSource type: text\n\n${rawText}`;
+    return {
+      rawText,
+      structuredText,
+      sectionCount: estimateSectionCount(structuredText),
+    };
   }
 
-  return `Title: ${material.title}\nSource type: ${material.source_type}\nStorage path: ${material.storage_path ?? ""}\n\nPDF/OCR extraction adapter is prepared for this file type. Replace this metadata-only fallback with a server-side parser before production.`;
+  throw new AppError("INVALID_REQUEST", `Unsupported source_type for text extraction: ${material.source_type}`, 400);
+}
+
+async function extractPdfStructuredText(
+  supabase: ReturnType<typeof createClient>,
+  material: Material,
+): Promise<ExtractedMaterialText> {
+  if (!material.storage_path?.trim()) {
+    throw new AppError("PDF_DOWNLOAD_FAILED", "PDF material does not include storage_path.", 422);
+  }
+
+  const pdfBytes = await downloadPdfBytes(supabase, material.storage_path);
+  const pages = await extractPdfPages(pdfBytes);
+  const rawText = normalizeExtractedPdfText(pages.map((page) => page.text).join("\n\n"));
+  if (rawText.length < MIN_PDF_TEXT_LENGTH) {
+    throw new AppError("PDF_TEXT_EMPTY", `PDF text extraction produced only ${rawText.length} characters. OCR/image PDFs are outside MVP scope.`, 422);
+  }
+
+  const structuredText = buildPdfStructuredText(material.title, pages);
+  if (structuredText.length < MIN_PDF_TEXT_LENGTH) {
+    throw new AppError("PDF_TEXT_EMPTY", `Structured PDF text produced only ${structuredText.length} characters.`, 422);
+  }
+
+  return {
+    rawText,
+    structuredText,
+    sectionCount: pages.filter((page) => page.text.trim().length > 0).length,
+  };
+}
+
+async function downloadPdfBytes(
+  supabase: ReturnType<typeof createClient>,
+  storagePath: string,
+) {
+  const { data, error } = await supabase.storage
+    .from(MATERIALS_BUCKET)
+    .download(storagePath);
+  if (error || !data) {
+    throw new AppError("PDF_DOWNLOAD_FAILED", "Failed to download PDF from Supabase Storage.", 502, error);
+  }
+
+  const bytes = new Uint8Array(await data.arrayBuffer());
+  if (bytes.length === 0) {
+    throw new AppError("PDF_DOWNLOAD_FAILED", "Downloaded PDF was empty.", 502);
+  }
+  return bytes;
+}
+
+async function extractPdfPages(pdfBytes: Uint8Array) {
+  try {
+    const loadingTask = pdfjsLib.getDocument({
+      data: pdfBytes,
+      disableWorker: true,
+      useSystemFonts: true,
+      isEvalSupported: false,
+    });
+    const pdf = await loadingTask.promise;
+    const pages: Array<{ pageNumber: number; text: string }> = [];
+    try {
+      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+        const page = await pdf.getPage(pageNumber);
+        const content = await page.getTextContent();
+        const text = normalizeExtractedPdfText(
+          content.items
+            .map((item: unknown) => {
+              const maybeTextItem = item as { str?: unknown };
+              return typeof maybeTextItem.str === "string" ? maybeTextItem.str : "";
+            })
+            .filter(Boolean)
+            .join(" "),
+        );
+        pages.push({ pageNumber, text });
+      }
+    } finally {
+      await pdf.destroy();
+    }
+    return pages;
+  } catch (error) {
+    throw new AppError("PDF_PARSE_FAILED", "Failed to parse text layer from PDF.", 502, error);
+  }
+}
+
+function buildPdfStructuredText(title: string, pages: Array<{ pageNumber: number; text: string }>) {
+  const sections = pages
+    .filter((page) => page.text.trim().length > 0)
+    .map((page) => `[Page ${page.pageNumber}]\n${page.text.trim()}`);
+  return normalizeExtractedPdfText([`Title: ${title}`, ...sections].join("\n\n"));
+}
+
+function normalizeExtractedPdfText(value: string) {
+  return value
+    .replace(/\u0000/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n\s+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function hasRequiredPdfInputSignal(structuredText: string) {
+  const hitCount = requiredPdfInputTerms.filter((term) => structuredText.includes(term)).length;
+  return hitCount >= 2;
 }
 
 async function extractConceptsWithOpenAi({
@@ -322,6 +495,12 @@ async function extractConceptsWithOpenAi({
 }): Promise<Concept[]> {
   const model = Deno.env.get("OPENAI_MODEL") ?? "gpt-4.1-mini";
   const clippedText = structuredText.length > 12000 ? structuredText.slice(0, 12000) : structuredText;
+  logStep("extract.openai.input", {
+    textLength: structuredText.length,
+    clippedTextLength: clippedText.length,
+    sectionCount: estimateSectionCount(structuredText),
+    textPreview: previewText(clippedText, 2000),
+  });
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -358,7 +537,7 @@ async function extractConceptsWithOpenAi({
   logStep("extract.openai.response", {
     status: response.status,
     bodyLength: body.length,
-    bodyPreview: previewText(body, 1000),
+    rawResponsePreview: previewText(body, 2000),
   });
   if (!response.ok) {
     throw new AppError("OPENAI_REQUEST_FAILED", `OpenAI AI1 request failed (${response.status}).`, 502, body);
@@ -366,16 +545,27 @@ async function extractConceptsWithOpenAi({
 
   try {
     logStep("extract.openai.raw_before_parse", {
-      bodyPreview: previewText(body, 1000),
+      rawResponsePreview: previewText(body, 2000),
     });
     const responseJson = JSON.parse(body) as Record<string, unknown>;
     const outputText = extractOutputText(responseJson);
     logStep("extract.openai.output_text", {
       outputLength: outputText.length,
-      outputPreview: previewText(outputText, 1000),
+      outputPreview: previewText(outputText, 2000),
     });
     const parsed = parseConceptPayload(outputText);
     const concepts = conceptsArrayFromParsed(parsed);
+    const normalizationDiagnostics = concepts.map(conceptNormalizationDiagnostic);
+    logStep("extract.openai.concepts.raw", {
+      rawConceptCount: concepts.length,
+      rawConcepts: concepts.map(rawConceptLogSummary),
+    });
+    logStep("extract.openai.concepts.normalized", {
+      beforeValidatorCount: concepts.length,
+      acceptedCount: normalizationDiagnostics.filter((diagnostic) => !diagnostic.rejection_reason).length,
+      rejectedConcepts: normalizationDiagnostics.filter((diagnostic) => diagnostic.rejection_reason),
+      acceptedConcepts: normalizationDiagnostics.filter((diagnostic) => !diagnostic.rejection_reason),
+    });
     return concepts
       .map(normalizeConcept)
       .filter((concept): concept is Concept => concept !== null)
@@ -668,6 +858,109 @@ function usableConceptsForQuiz(concepts: Concept[]) {
       isQuestionWorthyConceptType(concept.concept_type) &&
       !rejectCandidateReason(concept.name),
     ));
+}
+
+function conceptLogSummary(concept: Concept) {
+  return {
+    name: concept.name,
+    description: previewText(concept.description, 160),
+    importance_score: concept.importance_score,
+    concept_type: concept.concept_type,
+    exclusion_reason: concept.exclusion_reason,
+    evidence: previewText(concept.evidence, 160),
+  };
+}
+
+function rawConceptLogSummary(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return { value: previewText(stringFromUnknown(value), 240) };
+  }
+  const raw = value as Record<string, unknown>;
+  return {
+    name: stringFromUnknown(raw.name),
+    description: previewText(stringFromUnknown(raw.description), 240),
+    importance_score: raw.importance_score,
+    concept_type: raw.concept_type,
+    exclusion_reason: raw.exclusion_reason,
+    evidence: previewText(stringFromUnknown(raw.evidence), 240),
+  };
+}
+
+function conceptNormalizationDiagnostic(value: unknown) {
+  const rawSummary = rawConceptLogSummary(value);
+  if (!value || typeof value !== "object") {
+    return { ...rawSummary, rejection_reason: "not_object" };
+  }
+
+  const raw = value as Record<string, unknown>;
+  const rawName = stringFromUnknown(raw.name);
+  const name = sanitizeConceptName(raw.name);
+  const explicitExclusionReason = sanitizeExclusionReason(raw.exclusion_reason);
+  const deterministicRejection = rejectCandidateReason(rawName);
+  const exclusionReason = explicitExclusionReason ?? deterministicRejection;
+  if (!name) return { ...rawSummary, rejection_reason: deterministicRejection ?? "invalid_name" };
+  if (exclusionReason) return { ...rawSummary, rejection_reason: exclusionReason };
+
+  const importanceScore = Math.max(0, Math.min(100, Math.round(Number(raw.importance_score) || 0)));
+  if (importanceScore < 65) return { ...rawSummary, rejection_reason: "importance_score_below_65" };
+
+  const conceptType = sanitizeConceptType(raw.concept_type);
+  if (!conceptType) return { ...rawSummary, rejection_reason: "invalid_concept_type" };
+  if (!isQuestionWorthyConceptType(conceptType)) return { ...rawSummary, rejection_reason: "non_question_worthy_concept_type" };
+
+  const evaluation = normalizeEvaluation(raw.evaluation);
+  if ((evaluation.metadata_penalty ?? 0) >= 50) return { ...rawSummary, rejection_reason: "metadata_penalty" };
+
+  const description = sanitizeVisibleKoreanText(raw.description);
+  if (!description) return { ...rawSummary, rejection_reason: "invalid_description" };
+
+  const evidence = sanitizeVisibleKoreanText(raw.evidence);
+  if (!evidence) return { ...rawSummary, rejection_reason: "invalid_evidence" };
+
+  return {
+    name,
+    importance_score: importanceScore,
+    concept_type: conceptType,
+    exclusion_reason: null,
+    rejection_reason: null,
+  };
+}
+
+function conceptUsabilityDiagnostics(concepts: Concept[]) {
+  return concepts.map((concept) => {
+    const name = sanitizeConceptName(concept.name);
+    const description = sanitizeVisibleKoreanText(concept.description);
+    const evidence = sanitizeVisibleKoreanText(concept.evidence);
+    const importanceScore = Math.max(0, Math.min(100, Math.round(Number(concept.importance_score) || 0)));
+    const conceptType = sanitizeConceptType(concept.concept_type);
+    const exclusionReason = sanitizeExclusionReason(concept.exclusion_reason);
+    const candidateRejection = rejectCandidateReason(concept.name);
+    let rejectionReason: string | null = null;
+    if (!name) rejectionReason = candidateRejection ?? "invalid_name";
+    else if (!description) rejectionReason = "invalid_description";
+    else if (!evidence) rejectionReason = "invalid_evidence";
+    else if (importanceScore < 65) rejectionReason = "importance_score_below_65";
+    else if (exclusionReason != null) rejectionReason = exclusionReason;
+    else if (!isQuestionWorthyConceptType(conceptType)) rejectionReason = conceptType ? "non_question_worthy_concept_type" : "invalid_concept_type";
+    else if (candidateRejection) rejectionReason = candidateRejection;
+
+    return {
+      name: concept.name,
+      sanitized_name: name,
+      importance_score: importanceScore,
+      concept_type: conceptType,
+      exclusion_reason: exclusionReason,
+      rejection_reason: rejectionReason,
+    };
+  });
+}
+
+function estimateSectionCount(text: string) {
+  const pageMarkers = text.match(/^\[?Page\s+\d+\]?/gim)?.length ?? 0;
+  if (pageMarkers > 0) return pageMarkers;
+  const headingMarkers = text.match(/^#{1,6}\s+|^\d+(?:\.\d+)*\s+\S+/gm)?.length ?? 0;
+  if (headingMarkers > 0) return headingMarkers;
+  return text.trim() ? 1 : 0;
 }
 
 function sanitizeExclusionReason(value: unknown) {
