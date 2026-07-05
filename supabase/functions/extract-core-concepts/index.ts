@@ -1,5 +1,6 @@
 ﻿import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import * as pdfjsLib from "https://esm.sh/pdfjs-dist@4.10.38/legacy/build/pdf.mjs?bundle";
+import * as pdfjsWorker from "https://esm.sh/pdfjs-dist@4.10.38/legacy/build/pdf.worker.mjs?bundle";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -417,11 +418,21 @@ async function downloadPdfBytes(
   const { data, error } = await supabase.storage
     .from(MATERIALS_BUCKET)
     .download(storagePath);
+  logStep("extract.pdf.storage_download", {
+    success: !error && Boolean(data),
+    storagePath,
+    error: error ? serializeUnknown(error) : null,
+  });
   if (error || !data) {
     throw new AppError("PDF_DOWNLOAD_FAILED", "Failed to download PDF from Supabase Storage.", 502, error);
   }
 
   const bytes = new Uint8Array(await data.arrayBuffer());
+  logStep("extract.pdf.downloaded", {
+    byteSize: bytes.length,
+    headerPreview32Bytes: Array.from(bytes.slice(0, 32)),
+    headerPreview32Text: String.fromCharCode(...bytes.slice(0, 32)).replace(/[^\x20-\x7E]/g, "."),
+  });
   if (bytes.length === 0) {
     throw new AppError("PDF_DOWNLOAD_FAILED", "Downloaded PDF was empty.", 502);
   }
@@ -430,6 +441,10 @@ async function downloadPdfBytes(
 
 async function extractPdfPages(pdfBytes: Uint8Array) {
   try {
+    logStep("extract.pdf.pdfjs_get_document.start", {
+      byteSize: pdfBytes.length,
+    });
+    configurePdfJsNoWorker();
     const loadingTask = pdfjsLib.getDocument({
       data: pdfBytes,
       disableWorker: true,
@@ -437,11 +452,31 @@ async function extractPdfPages(pdfBytes: Uint8Array) {
       isEvalSupported: false,
     });
     const pdf = await loadingTask.promise;
+    logStep("extract.pdf.pdfjs_get_document.success", {
+      success: true,
+      numPages: pdf.numPages,
+    });
     const pages: Array<{ pageNumber: number; text: string }> = [];
     try {
       for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
         const page = await pdf.getPage(pageNumber);
-        const content = await page.getTextContent();
+        let content;
+        try {
+          content = await page.getTextContent();
+          logStep("extract.pdf.page_text_content.success", {
+            pageNumber,
+            success: true,
+            itemCount: content.items.length,
+          });
+        } catch (pageError) {
+          logStep("extract.pdf.page_text_content.error", {
+            pageNumber,
+            success: false,
+            error: serializeUnknown(pageError),
+            stack: pageError instanceof Error ? pageError.stack : null,
+          });
+          throw pageError;
+        }
         const text = normalizeExtractedPdfText(
           content.items
             .map((item: unknown) => {
@@ -451,6 +486,11 @@ async function extractPdfPages(pdfBytes: Uint8Array) {
             .filter(Boolean)
             .join(" "),
         );
+        logStep("extract.pdf.page_text_extracted", {
+          pageNumber,
+          textLength: text.length,
+          textPreview200: previewText(text, 200),
+        });
         pages.push({ pageNumber, text });
       }
     } finally {
@@ -458,8 +498,19 @@ async function extractPdfPages(pdfBytes: Uint8Array) {
     }
     return pages;
   } catch (error) {
+    logStep("extract.pdf.parse_failed", {
+      pdfParseFailedLine: "supabase/functions/extract-core-concepts/index.ts:506",
+      error: serializeUnknown(error),
+      stack: error instanceof Error ? error.stack : null,
+    });
     throw new AppError("PDF_PARSE_FAILED", "Failed to parse text layer from PDF.", 502, error);
   }
+}
+
+function configurePdfJsNoWorker() {
+  (globalThis as unknown as {
+    pdfjsWorker?: typeof pdfjsWorker;
+  }).pdfjsWorker = pdfjsWorker;
 }
 
 function buildPdfStructuredText(title: string, pages: Array<{ pageNumber: number; text: string }>) {
