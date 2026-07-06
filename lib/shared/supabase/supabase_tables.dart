@@ -15,5 +15,6 @@
   static const roomItems = 'room_items';
   static const userItems = 'user_items';
   static const userRoomLayouts = 'user_room_layouts';
+  static const memorySeeds = 'memory_seeds';
   static const userStreaks = 'user_streaks';
 }

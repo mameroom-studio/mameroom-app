@@ -23,7 +23,7 @@ class GamificationRemoteDataSource {
 
     final itemRows = await _client
         .from(SupabaseTables.roomItems)
-        .select('id,item_code,name,item_type,price,asset_path,is_active')
+        .select('id,item_code,name,description,item_type,rarity,price,asset_key,asset_path,default_position_x,default_position_y,is_active')
         .eq('is_active', true)
         .order('price', ascending: true);
 
@@ -44,21 +44,35 @@ class GamificationRemoteDataSource {
         .from(SupabaseTables.userRoomLayouts)
         .select('id,item_id,position_x,position_y')
         .eq('user_id', user.id);
-    final layouts = <UserRoomLayout>[];
+    final layoutsByItemId = <String, UserRoomLayout>{};
     for (final row in layoutRows) {
       final json = Map<String, dynamic>.from(row as Map);
-      final item = itemsById[json['item_id']];
+      final itemId = json['item_id']?.toString();
+      final item = itemId == null ? null : itemsById[itemId];
       if (item == null) {
         continue;
       }
-      layouts.add(UserRoomLayoutModel.fromJson(json: json, item: item));
+      layoutsByItemId[item.id] = UserRoomLayoutModel.fromJson(json: json, item: item);
+    }
+
+    for (final itemId in ownedItemIds) {
+      final item = itemsById[itemId];
+      if (item == null || layoutsByItemId.containsKey(itemId)) {
+        continue;
+      }
+      layoutsByItemId[itemId] = UserRoomLayout(
+        id: 'default:$itemId',
+        item: item,
+        positionX: item.defaultPositionX,
+        positionY: item.defaultPositionY,
+      );
     }
 
     return MyRoomState(
       walletBalance: _intFrom(wallet?['balance']),
       shopItems: items,
       ownedItemIds: ownedItemIds,
-      layouts: layouts,
+      layouts: layoutsByItemId.values.toList(growable: false),
     );
   }
 
@@ -73,26 +87,15 @@ class GamificationRemoteDataSource {
       throw StateError('User session is required to place room items.');
     }
 
-    final position = _defaultPosition(item.itemType);
     await _client.from(SupabaseTables.userRoomLayouts).upsert({
       'user_id': user.id,
       'item_id': item.id,
-      'position_x': position.$1,
-      'position_y': position.$2,
+      'position_x': item.defaultPositionX,
+      'position_y': item.defaultPositionY,
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     }, onConflict: 'user_id,item_id');
 
     return loadMyRoom();
-  }
-
-  (double, double) _defaultPosition(String itemType) {
-    return switch (itemType) {
-      'desk' => (0.50, 0.66),
-      'chair' => (0.34, 0.72),
-      'plant' => (0.78, 0.64),
-      'lamp' => (0.18, 0.58),
-      _ => (0.50, 0.70),
-    };
   }
 
   int _intFrom(Object? value) {

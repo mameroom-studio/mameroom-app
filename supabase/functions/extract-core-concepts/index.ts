@@ -355,10 +355,6 @@ async function extractStructuredText(
   supabase: ReturnType<typeof createClient>,
   material: Material,
 ): Promise<ExtractedMaterialText> {
-  if (material.source_type === "pdf") {
-    return extractPdfStructuredText(supabase, material);
-  }
-
   if (material.structured_text?.trim()) {
     const structuredText = material.structured_text.trim();
     return {
@@ -366,6 +362,10 @@ async function extractStructuredText(
       structuredText,
       sectionCount: estimateSectionCount(structuredText),
     };
+  }
+
+  if (material.source_type === "pdf") {
+    return extractPdfStructuredText(supabase, material);
   }
 
   if (material.source_type === "text") {

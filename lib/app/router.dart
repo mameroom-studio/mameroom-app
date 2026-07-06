@@ -9,7 +9,9 @@ import '../features/auth/presentation/pages/signup_page.dart';
 import '../features/auth/presentation/providers/auth_providers.dart';
 import '../features/gamification/presentation/pages/room_page.dart';
 import '../features/gamification/presentation/pages/shop_page.dart';
+import '../features/home/presentation/pages/home_shell_page.dart';
 import '../features/library/presentation/pages/library_page.dart';
+import '../features/memory_seed/presentation/pages/arboretum_page.dart';
 import '../features/onboarding/presentation/pages/creating_room_page.dart';
 import '../features/onboarding/presentation/pages/email_verification_page.dart';
 import '../features/onboarding/presentation/pages/memory_seed_selection_page.dart';
@@ -74,7 +76,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           location == LoginPage.routePath ||
           location == SignupPage.routePath ||
           location == EmailVerificationPage.routePath) {
-        return LibraryPage.routePath;
+        return HomeShellPage.homeRoutePath;
       }
 
       return null;
@@ -111,8 +113,24 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const CreatingRoomPage(),
       ),
       GoRoute(
+        path: HomeShellPage.homeRoutePath,
+        builder: (context, state) => const HomeTabRoute(),
+      ),
+      GoRoute(
+        path: HomeShellPage.studyRoutePath,
+        builder: (context, state) => const StudyTabRoute(),
+      ),
+      GoRoute(
+        path: HomeShellPage.rankRoutePath,
+        builder: (context, state) => const RankTabRoute(),
+      ),
+      GoRoute(
+        path: HomeShellPage.myInfoRoutePath,
+        builder: (context, state) => const MyInfoTabRoute(),
+      ),
+      GoRoute(
         path: LibraryPage.routePath,
-        builder: (context, state) => const LibraryPage(),
+        builder: (context, state) => const StudyTabRoute(),
       ),
       GoRoute(
         path: UploadPage.routePath,
@@ -148,9 +166,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: ShopPage.routePath,
         builder: (context, state) => const ShopPage(),
       ),
+      GoRoute(
+        path: ArboretumPage.routePath,
+        builder: (context, state) => const ArboretumPage(),
+      ),
     ],
     errorBuilder: (context, state) => const Scaffold(
       body: Center(child: Text('Page not found')),
     ),
   );
 });
+

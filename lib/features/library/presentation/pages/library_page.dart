@@ -9,7 +9,10 @@ import '../../../auth/presentation/pages/login_page.dart';
 import '../../../auth/presentation/providers/auth_controller.dart';
 import '../../../auth/presentation/providers/auth_providers.dart';
 import '../../../coins/presentation/providers/coin_providers.dart';
+import '../../../gamification/domain/entities/room_item.dart';
 import '../../../gamification/presentation/pages/room_page.dart';
+import '../../../gamification/presentation/pages/shop_page.dart';
+import '../../../gamification/presentation/providers/gamification_providers.dart';
 import '../../../quiz/presentation/pages/quiz_page.dart';
 import '../../../review/presentation/pages/review_page.dart';
 import '../../../streak/presentation/providers/streak_providers.dart';
@@ -38,6 +41,7 @@ class LibraryPage extends ConsumerWidget {
     final authState = ref.watch(authControllerProvider);
     final wallet = ref.watch(coinWalletProvider);
     final streak = ref.watch(streakProvider);
+    final roomState = ref.watch(myRoomControllerProvider);
 
     return MameroomShell(
       showSparkles: false,
@@ -75,6 +79,14 @@ class LibraryPage extends ConsumerWidget {
                 currentStreak: currentStreak,
               ),
               const SizedBox(height: 16),
+              _HomeRoomPreview(
+                roomState: roomState,
+                walletBalance: walletBalance,
+                currentStreak: currentStreak,
+                onShop: () => context.push(ShopPage.routePath),
+                onRoom: () => context.push(RoomPage.routePath),
+              ),
+              const SizedBox(height: 16),
               _MetricsGrid(
                 todayReviewCount: dashboard.todayReviewCount,
                 totalMemoryPercent: dashboard.totalMemoryPercent,
@@ -90,7 +102,7 @@ class LibraryPage extends ConsumerWidget {
                 onUpload: () => context.push(UploadPage.routePath),
               ),
               const SizedBox(height: 26),
-              _SectionHeader(title: '내 공부 자료', trailing: '${dashboard.materials.length}'),
+              _SectionHeader(title: '공부 자료', trailing: '${dashboard.materials.length}'),
               const SizedBox(height: 12),
               if (dashboard.materials.isEmpty)
                 _EmptyMaterials(onUpload: () => context.push(UploadPage.routePath))
@@ -130,7 +142,7 @@ class _HomeHeader extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('MAMEROOM', style: Theme.of(context).textTheme.titleLarge?.copyWith(letterSpacing: 1.1)),
-              Text(email ?? '오늘도 기억을 심어볼까요?', maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: colors.muted)),
+              Text(email ?? '오늘의 기억을 심어볼까요?', maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: colors.muted)),
             ],
           ),
         ),
@@ -171,7 +183,7 @@ class _HeroRoomCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Ready to study', style: Theme.of(context).textTheme.headlineMedium),
+                Text('학습 준비 완료', style: Theme.of(context).textTheme.headlineMedium),
                 const SizedBox(height: 8),
                 Text('오늘 복습 $reviewCount개 · 기억률 $memoryPercent% · $currentStreak일 연속', style: Theme.of(context).textTheme.bodyMedium),
                 const SizedBox(height: 18),
@@ -193,6 +205,117 @@ class _HeroRoomCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _HomeRoomPreview extends StatelessWidget {
+  const _HomeRoomPreview({
+    required this.roomState,
+    required this.walletBalance,
+    required this.currentStreak,
+    required this.onShop,
+    required this.onRoom,
+  });
+
+  final AsyncValue<MyRoomState> roomState;
+  final int walletBalance;
+  final int currentStreak;
+  final VoidCallback onShop;
+  final VoidCallback onRoom;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.mameroom;
+    final room = roomState.asData?.value;
+    final placedItems = room?.layouts.map((layout) => layout.item).toList(growable: false) ?? const <RoomItem>[];
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.paper,
+        border: Border.all(color: colors.line),
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [BoxShadow(color: colors.primary.withValues(alpha: 0.06), blurRadius: 16, offset: const Offset(0, 8))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(child: Text('My Memory Room', style: Theme.of(context).textTheme.titleLarge)),
+              Chip(label: Text('$walletBalance M-Coin')),
+            ],
+          ),
+          const SizedBox(height: 12),
+          AspectRatio(
+            aspectRatio: 1.9,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(color: colors.line),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    top: 72,
+                    child: DecoratedBox(decoration: BoxDecoration(color: colors.primaryMist.withValues(alpha: 0.24))),
+                  ),
+                  const Positioned(left: 18, bottom: 22, child: PixelSeed(size: 42)),
+                  const Positioned(left: 110, bottom: 24, child: PixelCharacter(size: 58)),
+                  Positioned(right: 14, top: 12, child: Text('Streak $currentStreak일')),
+                  Positioned(
+                    right: 14,
+                    bottom: 14,
+                    child: Wrap(
+                      spacing: 6,
+                      children: [
+                        for (final item in placedItems.take(4))
+                          Tooltip(
+                            message: item.name,
+                            child: Icon(_homeRoomIconFor(item.itemType), color: colors.primary, size: 24),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: onShop,
+                  icon: const Icon(Icons.storefront_outlined),
+                  label: const Text('상점 가기'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: onRoom,
+                  icon: const Icon(Icons.meeting_room_outlined),
+                  label: const Text('내 방 보기'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+IconData _homeRoomIconFor(String type) {
+  return switch (type) {
+    'desk' => Icons.table_bar_outlined,
+    'chair' => Icons.chair_outlined,
+    'plant' => Icons.local_florist_outlined,
+    'lamp' => Icons.light_outlined,
+    'rug' => Icons.crop_landscape_outlined,
+    'clock' => Icons.schedule_outlined,
+    _ => Icons.widgets_outlined,
+  };
 }
 
 class _MetricsGrid extends StatelessWidget {
@@ -299,7 +422,7 @@ class _PrimaryActions extends StatelessWidget {
               side: BorderSide(color: colors.line),
             ),
             icon: Icon(Icons.upload_file_outlined, color: colors.primary),
-            label: const Text('공부할 파일 업로드'),
+            label: const Text('공부 파일 업로드'),
           ),
         ),
       ],
@@ -411,7 +534,7 @@ class _MaterialCard extends StatelessWidget {
           const SizedBox(height: 12),
           _DashboardProgressLine(
             label: '기억률',
-            valueLabel: '🧠 ${material.memoryPercent}%',
+            valueLabel: '${material.memoryPercent}%',
             value: material.memoryPercent / 100,
             color: material.memoryPercent >= 80 ? colors.sun : colors.seedGreen,
           ),
@@ -423,7 +546,7 @@ class _MaterialCard extends StatelessWidget {
               _DashboardInfoChip(icon: Icons.event_available_outlined, label: '복습 예정 ${material.dueReviewCount}개'),
               _DashboardInfoChip(icon: Icons.spa_outlined, label: '${material.seedEmoji} ${material.seedLabel}'),
               _DashboardInfoChip(icon: Icons.schedule_outlined, label: '최근 학습 ${material.recentStudyLabel}'),
-              _DashboardInfoChip(icon: Icons.local_fire_department_outlined, label: '🔥 ${material.currentStreak}일'),
+              _DashboardInfoChip(icon: Icons.local_fire_department_outlined, label: '${material.currentStreak}일 연속'),
             ],
           ),
           if (material.canStartQuiz) ...[

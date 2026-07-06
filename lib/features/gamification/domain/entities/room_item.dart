@@ -3,18 +3,28 @@ class RoomItem {
     required this.id,
     required this.itemCode,
     required this.name,
+    required this.description,
     required this.itemType,
+    required this.rarity,
     required this.price,
+    required this.assetKey,
     required this.assetPath,
+    required this.defaultPositionX,
+    required this.defaultPositionY,
     required this.isActive,
   });
 
   final String id;
   final String itemCode;
   final String name;
+  final String description;
   final String itemType;
+  final String rarity;
   final int price;
+  final String assetKey;
   final String assetPath;
+  final double defaultPositionX;
+  final double defaultPositionY;
   final bool isActive;
 }
 

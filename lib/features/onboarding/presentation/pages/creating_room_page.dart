@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -6,7 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../../../shared/design_system/theme/mameroom_theme_extension.dart';
 import '../../../../shared/widgets/mameroom_shell.dart';
 import '../../../../shared/widgets/pixel_placeholders.dart';
-import '../../../gamification/presentation/pages/room_page.dart';
+import '../../../home/presentation/pages/home_shell_page.dart';
 
 class CreatingRoomPage extends StatefulWidget {
   const CreatingRoomPage({super.key});
@@ -33,7 +33,7 @@ class _CreatingRoomPageState extends State<CreatingRoomPage> {
         _timer?.cancel();
         Future<void>.delayed(const Duration(milliseconds: 520), () {
           if (mounted) {
-            context.go(RoomPage.routePath);
+            context.go(HomeShellPage.homeRoutePath);
           }
         });
       }
@@ -105,3 +105,4 @@ class _CreatingRoomPageState extends State<CreatingRoomPage> {
     );
   }
 }
+

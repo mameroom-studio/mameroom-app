@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -6,7 +6,7 @@ import '../../../../core/config/env.dart';
 import '../../../../shared/design_system/theme/mameroom_theme_extension.dart';
 import '../../../../shared/widgets/mameroom_shell.dart';
 import '../../../../shared/widgets/pixel_placeholders.dart';
-import '../../../library/presentation/pages/library_page.dart';
+import '../../../home/presentation/pages/home_shell_page.dart';
 import '../../../onboarding/presentation/pages/email_verification_page.dart';
 import 'signup_page.dart';
 import '../providers/auth_controller.dart';
@@ -195,7 +195,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       if (!mounted || result != AuthSubmitResult.signedIn) {
         return;
       }
-      context.go(LibraryPage.routePath);
+      context.go(HomeShellPage.homeRoutePath);
     } catch (_) {
       // Error state is exposed by authControllerProvider and shown by ref.listen.
     }
@@ -222,3 +222,4 @@ class _ConfigWarning extends StatelessWidget {
     );
   }
 }
+

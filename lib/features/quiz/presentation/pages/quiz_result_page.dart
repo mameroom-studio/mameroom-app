@@ -1,13 +1,15 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../shared/widgets/reward_feedback_overlay.dart';
 import '../../../library/presentation/pages/library_page.dart';
+import '../../../memory_seed/domain/entities/memory_seed.dart';
+import '../../../memory_seed/presentation/providers/memory_seed_providers.dart';
 import '../../domain/entities/quiz_result_snapshot.dart';
 import '../providers/quiz_providers.dart';
 
-class QuizResultPage extends ConsumerWidget {
+class QuizResultPage extends ConsumerStatefulWidget {
   const QuizResultPage({this.snapshot, super.key});
 
   static const routePath = '/quiz/result';
@@ -15,94 +17,102 @@ class QuizResultPage extends ConsumerWidget {
   final QuizResultSnapshot? snapshot;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<QuizResultPage> createState() => _QuizResultPageState();
+}
+
+class _QuizResultPageState extends ConsumerState<QuizResultPage> {
+  bool _seedGrowthRequested = false;
+  MemorySeedGrowthResult? _seedGrowthResult;
+  Object? _seedGrowthError;
+
+  @override
+  Widget build(BuildContext context) {
     final state = ref.watch(quizControllerProvider);
     final session = state.asData?.value;
-    final effectiveSnapshot = snapshot ??
+    final effectiveSnapshot = widget.snapshot ??
         (session == null ? null : QuizResultSnapshot.fromSession(session));
     final summary = effectiveSnapshot?.summary;
 
+    if (summary != null && !_seedGrowthRequested) {
+      _seedGrowthRequested = true;
+      Future.microtask(() async {
+        try {
+          final result = await ref.read(memorySeedControllerProvider.notifier).applyQuizResultGrowth(
+                correctCount: summary.correctCount,
+                totalCount: summary.totalCount,
+                accuracy: summary.accuracy,
+              );
+          if (mounted) {
+            setState(() => _seedGrowthResult = result);
+          }
+        } catch (error) {
+          if (mounted) {
+            setState(() => _seedGrowthError = error);
+          }
+        }
+      });
+    }
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Quiz Result')),
+      appBar: AppBar(title: const Text('학습 결과')),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: summary == null || effectiveSnapshot == null
-              ? const Center(child: Text('No quiz result found.'))
-              : Column(
+        child: summary == null || effectiveSnapshot == null
+            ? const Center(child: Text('학습 결과를 찾을 수 없어요.'))
+            : SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text('Result', style: Theme.of(context).textTheme.headlineMedium),
+                    Text('오늘의 기억', style: Theme.of(context).textTheme.headlineMedium),
                     if (effectiveSnapshot.rewardWarning != null) ...[
                       const SizedBox(height: 12),
                       _WarningBanner(message: effectiveSnapshot.rewardWarning!),
                     ],
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 18),
                     _ResultTile(
-                      label: 'Correct answers',
+                      icon: Icons.check_circle_outline,
+                      label: '정답 수',
                       value: '${summary.correctCount} / ${summary.totalCount}',
                     ),
                     _ResultTile(
-                      label: 'Accuracy',
+                      icon: Icons.percent_rounded,
+                      label: '정확도',
                       value: '${(summary.accuracy * 100).round()}%',
                     ),
                     _ResultTile(
-                      label: 'Average response time',
-                      value: '${(summary.averageResponseTimeMs / 1000).toStringAsFixed(1)}s',
-                    ),
-                    _ResultTile(
-                      label: 'First attempt accuracy',
-                      value: '${(summary.firstAttemptAccuracy * 100).round()}%',
-                    ),
-                    _ResultTile(
-                      label: 'Retry success rate',
-                      value: '${(summary.retrySuccessRate * 100).round()}%',
-                    ),
-                    _ResultTile(
-                      label: 'Hints used',
-                      value: '${summary.hintUsedCount}',
-                    ),
-                    _ResultTile(
-                      label: 'Memory consolidation',
-                      value: '${(summary.memoryConsolidationRate * 100).round()}%',
-                    ),
-                    const Divider(height: 32),
-                    _ResultTile(
-                      label: 'Average memory score',
-                      value: '${(effectiveSnapshot.averageMemoryScore * 100).round()}%',
-                    ),
-                    _ResultTile(
-                      label: 'Memory change',
+                      icon: Icons.spa_outlined,
+                      label: '기억률 변화',
                       value: _formatDelta(effectiveSnapshot.averageMemoryDelta),
                     ),
                     _ResultTile(
-                      label: 'Next review',
-                      value: _formatReviewTime(effectiveSnapshot.nextReviewAt),
-                    ),
-                    const Divider(height: 32),
-                    _ResultTile(
-                      label: 'Earned M-Coin',
+                      icon: Icons.monetization_on_outlined,
+                      label: '획득 코인',
                       value: '+${effectiveSnapshot.coinReward.earnedCoins}',
                       animated: true,
                     ),
                     _ResultTile(
-                      label: 'Total M-Coin',
-                      value: '${effectiveSnapshot.coinReward.balance}',
-                      animated: true,
+                      icon: Icons.event_available_outlined,
+                      label: '다음 복습',
+                      value: _formatReviewTime(effectiveSnapshot.nextReviewAt),
                     ),
                     _ResultTile(
-                      label: 'Bonus M-Coin',
-                      value: '+${effectiveSnapshot.coinReward.bonusCoins}',
-                      animated: true,
+                      icon: Icons.local_florist_outlined,
+                      label: 'Seed 성장',
+                      value: _seedGrowthLabel(),
                     ),
-                    const Spacer(),
-                    FilledButton(
+                    if (_seedGrowthResult != null) ...[
+                      const SizedBox(height: 8),
+                      _SeedSummary(seedGrowth: _seedGrowthResult!),
+                    ],
+                    const SizedBox(height: 22),
+                    FilledButton.icon(
                       onPressed: () => context.go(LibraryPage.routePath),
-                      child: const Text('Back to library'),
+                      icon: const Icon(Icons.home_rounded),
+                      label: const Text('라이브러리로 돌아가기'),
                     ),
                   ],
                 ),
-        ),
+              ),
       ),
     );
   }
@@ -114,12 +124,55 @@ class QuizResultPage extends ConsumerWidget {
 
   String _formatReviewTime(DateTime? value) {
     if (value == null) {
-      return '-';
+      return '예정 없음';
     }
     final local = value.toLocal();
-    final date = '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
+    final date = '${local.month.toString().padLeft(2, '0')}/${local.day.toString().padLeft(2, '0')}';
     final time = '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
     return '$date $time';
+  }
+
+  String _seedGrowthLabel() {
+    final error = _seedGrowthError;
+    final result = _seedGrowthResult;
+    if (error != null) {
+      return '기록 보류';
+    }
+    if (result == null) {
+      return '계산 중';
+    }
+    final suffix = result.completedNow ? ' · 완성' : ' · ${result.seed.stageLabel}';
+    return '+${result.growthDelta}$suffix';
+  }
+}
+
+class _SeedSummary extends StatelessWidget {
+  const _SeedSummary({required this.seedGrowth});
+
+  final MemorySeedGrowthResult seedGrowth;
+
+  @override
+  Widget build(BuildContext context) {
+    final seed = seedGrowth.seed;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(seed.seedTypeLabel, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            LinearProgressIndicator(value: seed.progress),
+            const SizedBox(height: 8),
+            Text(
+              seedGrowth.completedNow
+                  ? 'Seed가 완성되었어요. 추후 Arboretum으로 이동할 수 있어요.'
+                  : '${seed.stageLabel} 단계 · ${seed.growthValue}/${seed.maxGrowthValue}',
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -150,11 +203,13 @@ class _WarningBanner extends StatelessWidget {
 
 class _ResultTile extends StatelessWidget {
   const _ResultTile({
+    required this.icon,
     required this.label,
     required this.value,
     this.animated = false,
   });
 
+  final IconData icon;
   final String label;
   final String value;
   final bool animated;
@@ -163,6 +218,7 @@ class _ResultTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListTile(
       contentPadding: EdgeInsets.zero,
+      leading: Icon(icon),
       title: Text(label),
       trailing: animated
           ? RewardAnimatedValue(

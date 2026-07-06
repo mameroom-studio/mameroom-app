@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:image_picker/image_picker.dart';
@@ -67,7 +69,7 @@ class UploadController extends StateNotifier<UploadDraftState> {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf'],
-      withData: true,
+      withData: kIsWeb,
     );
 
     final file = result?.files.single;
@@ -101,7 +103,7 @@ class UploadController extends StateNotifier<UploadDraftState> {
   Future<void> pickImage() async {
     final result = await FilePicker.pickFiles(
       type: FileType.image,
-      withData: true,
+      withData: kIsWeb,
     );
 
     final file = result?.files.single;
@@ -198,6 +200,13 @@ class UploadController extends StateNotifier<UploadDraftState> {
       return null;
     }
 
+    final uploadStopwatch = Stopwatch()..start();
+    _logUploadStop(
+      'STOP-01 upload.button.clicked',
+      job: job,
+      elapsedMs: 0,
+    );
+
     state = state.copyWith(
       isUploading: true,
       clearMessages: true,
@@ -208,13 +217,26 @@ class UploadController extends StateNotifier<UploadDraftState> {
       final result = await _ref
           .read(uploadUseCaseProvider)
           .createMaterialFromDraft(job);
+      _logUploadStop(
+        'STOP-17 upload.complete',
+        job: job,
+        materialId: result.materialId,
+        elapsedMs: uploadStopwatch.elapsedMilliseconds,
+      );
       state = UploadDraftState(
         selectedJob: job,
         uploadResult: result,
         infoMessage: 'Upload complete. Preparing analysis screen.',
       );
       return result;
-    } catch (error) {
+    } catch (error, stackTrace) {
+      _logUploadStop(
+        'STOP-17 upload.complete',
+        job: job,
+        elapsedMs: uploadStopwatch.elapsedMilliseconds,
+        exception: error,
+        stackTrace: stackTrace,
+      );
       state = state.copyWith(
         isUploading: false,
         errorMessage: _messageFor(error),
@@ -225,6 +247,34 @@ class UploadController extends StateNotifier<UploadDraftState> {
 
   void clearMessages() {
     state = state.copyWith(clearMessages: true);
+  }
+
+  void _logUploadStop(
+    String stopPoint, {
+    required UploadJob job,
+    String? materialId,
+    int? elapsedMs,
+    Object? exception,
+    StackTrace? stackTrace,
+  }) {
+    final payload = jsonEncode({
+      'stopPoint': stopPoint,
+      'materialId': materialId,
+      'materialTitle': job.displayName,
+      'fileExtension': _extensionOf(job.displayName),
+      'fileSize': job.sizeBytes,
+      'bytesLength': job.bytes?.length,
+      'elapsedMs': elapsedMs,
+      'rawTextLength': null,
+      'structuredTextLength': null,
+      'extractorName': null,
+      'isFlutterWeb': kIsWeb,
+      'exceptionMessage': exception?.toString(),
+      'stackTrace': stackTrace?.toString(),
+
+    });
+
+    debugPrint('[upload-flow] $payload');
   }
 
   bool _isValidSize(int sizeBytes) {
@@ -255,3 +305,4 @@ class UploadController extends StateNotifier<UploadDraftState> {
     return message.replaceFirst('Exception: ', '');
   }
 }
+

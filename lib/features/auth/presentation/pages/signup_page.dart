@@ -1,9 +1,9 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../shared/widgets/mameroom_shell.dart';
-import '../../../library/presentation/pages/library_page.dart';
+import '../../../home/presentation/pages/home_shell_page.dart';
 import '../../../onboarding/presentation/pages/email_verification_page.dart';
 import 'login_page.dart';
 import '../providers/auth_controller.dart';
@@ -70,7 +70,7 @@ class _SignupPageState extends ConsumerState<SignupPage> {
               Text('회원가입', textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineMedium),
               const SizedBox(height: 10),
               Text(
-                '마메룸의 새로운 시작이에요 🌱',
+                '마메룸의 새로운 시작이에요 ??',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
@@ -201,9 +201,10 @@ class _SignupPageState extends ConsumerState<SignupPage> {
         }
         return;
       }
-      context.go(LibraryPage.routePath);
+      context.go(HomeShellPage.homeRoutePath);
     } catch (_) {
       // Error state is exposed by authControllerProvider and shown by ref.listen.
     }
   }
 }
+

@@ -6,7 +6,7 @@ import '../../../../shared/widgets/mameroom_shell.dart';
 import '../../../../shared/widgets/pixel_placeholders.dart';
 import '../../../auth/presentation/pages/login_page.dart';
 import '../../../auth/presentation/providers/auth_providers.dart';
-import '../../../library/presentation/pages/library_page.dart';
+import '../../../home/presentation/pages/home_shell_page.dart';
 import '../providers/onboarding_providers.dart';
 
 class WelcomePage extends ConsumerStatefulWidget {
@@ -21,28 +21,28 @@ class WelcomePage extends ConsumerStatefulWidget {
 class _WelcomePageState extends ConsumerState<WelcomePage> {
   static const _steps = <_OnboardingStep>[
     _OnboardingStep(
-      title: '공부는 금방 잊혀집니다.',
-      icon: '📚',
-      description: '오늘 공부한 내용,\n얼마나 기억하고 계신가요?',
+      title: '怨듬???湲덈갑 ?딇?吏묐땲??',
+      icon: '?뱴',
+      description: '?ㅻ뒛 怨듬????댁슜,\n?쇰쭏??湲곗뼲?섍퀬 怨꾩떊媛??',
     ),
     _OnboardingStep(
-      title: 'AI가 기억을 만들어줍니다.',
-      icon: '🧠',
-      description: 'PDF를 업로드하면\nAI가 기억 문제를 생성합니다.',
+      title: 'AI媛 湲곗뼲??留뚮뱾?댁쨳?덈떎.',
+      icon: '?쭬',
+      description: 'PDF瑜??낅줈?쒗븯硫?nAI媛 湲곗뼲 臾몄젣瑜??앹꽦?⑸땲??',
     ),
     _OnboardingStep(
-      title: '기억은 씨앗이 됩니다.',
-      icon: '🌱',
-      description: '하나의 기억은\n하나의 씨앗이 됩니다.',
+      title: '湲곗뼲? ?⑥븮???⑸땲??',
+      icon: '?뙮',
+      description: '?섎굹??湲곗뼲?\n?섎굹???⑥븮???⑸땲??',
     ),
     _OnboardingStep(
-      title: '당신만의 방이 성장합니다.',
-      icon: '🏠',
-      description: '공부가 기록이 되고,\n기록이 추억이 됩니다.',
+      title: '?뱀떊留뚯쓽 諛⑹씠 ?깆옣?⑸땲??',
+      icon: '?룧',
+      description: '怨듬?媛 湲곕줉???섍퀬,\n湲곕줉??異붿뼲???⑸땲??',
     ),
     _OnboardingStep(
-      title: '당신의 첫 기억을 심어볼까요?',
-      icon: '🌱',
+      title: '?뱀떊??泥?湲곗뼲???ъ뼱蹂쇨퉴??',
+      icon: '?뙮',
       description: '',
       isFinal: true,
     ),
@@ -75,7 +75,7 @@ class _WelcomePageState extends ConsumerState<WelcomePage> {
               alignment: Alignment.centerRight,
               child: TextButton(
                 onPressed: _isCompleting ? null : _finishOnboarding,
-                child: const Text('건너뛰기'),
+                child: const Text('嫄대꼫?곌린'),
               ),
             ),
             Expanded(
@@ -90,7 +90,7 @@ class _WelcomePageState extends ConsumerState<WelcomePage> {
             ),
             const SizedBox(height: 18),
             MameroomPrimaryButton(
-              label: step.isFinal ? '시작하기' : '다음',
+              label: step.isFinal ? '?쒖옉?섍린' : '?ㅼ쓬',
               isLoading: _isCompleting,
               onPressed: _completeOnboarding,
             ),
@@ -128,7 +128,7 @@ class _WelcomePageState extends ConsumerState<WelcomePage> {
     }
 
     final isAuthenticated = ref.read(currentUserProvider).asData?.value != null;
-    context.go(isAuthenticated ? LibraryPage.routePath : LoginPage.routePath);
+    context.go(isAuthenticated ? HomeShellPage.homeRoutePath : LoginPage.routePath);
   }
 }
 
@@ -206,3 +206,4 @@ class _OnboardingPanel extends StatelessWidget {
     );
   }
 }
+

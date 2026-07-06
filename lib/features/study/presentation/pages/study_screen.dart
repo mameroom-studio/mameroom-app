@@ -25,6 +25,7 @@ class StudyScreen extends ConsumerStatefulWidget {
 
 class _StudyScreenState extends ConsumerState<StudyScreen> {
   final _textController = TextEditingController();
+  String? _revealedAnswerQuestionId;
 
   @override
   void initState() {
@@ -70,6 +71,7 @@ class _StudyScreenState extends ConsumerState<StudyScreen> {
 
     final answer = session.currentAnswer;
     final memoryValue = _memoryValue(session);
+    final isAnswerRevealed = _revealedAnswerQuestionId == question.id;
 
     return Column(
       children: [
@@ -103,6 +105,9 @@ class _StudyScreenState extends ConsumerState<StudyScreen> {
                       onChanged: ref.read(quizControllerProvider.notifier).selectAnswer,
                       onUseHint: ref.read(quizControllerProvider.notifier).useHint,
                       onCheckAnswer: () => _checkAnswer(session),
+                      onRevealAnswer: () => setState(() => _revealedAnswerQuestionId = question.id),
+                      onUnknown: _markCurrentQuestionUnknown,
+                      isAnswerRevealed: isAnswerRevealed,
                     ),
             ),
           ),
@@ -118,32 +123,30 @@ class _StudyScreenState extends ConsumerState<StudyScreen> {
 
   Future<void> _checkAnswer(QuizSessionState previousSession) async {
     await ref.read(quizControllerProvider.notifier).checkAnswer();
+  }
+
+  Future<void> _markCurrentQuestionUnknown() async {
+    final session = ref.read(quizControllerProvider).asData?.value;
+    if (session == null || session.isAnswerChecked || session.isSaving) {
+      return;
+    }
+    await ref.read(quizControllerProvider.notifier).passCurrentQuestion(
+          passType: LearningPassType.question,
+          reason: LearningPassReason.reviewLater,
+        );
     if (!mounted) {
       return;
     }
+    _textController.clear();
+    setState(() => _revealedAnswerQuestionId = null);
     final updated = ref.read(quizControllerProvider).asData?.value;
-    final answer = updated?.currentAnswer;
-    if (updated == null || answer == null || !answer.isCorrect) {
+    if (updated != null && updated.isSessionTerminal) {
+      await _advance(updated);
       return;
     }
-
-    final delta = updated.memoryUpdates.isEmpty ? 0.0 : updated.memoryUpdates.last.delta;
-    if (_hasFiveCorrectStreak(updated.answers)) {
-      await showDialog<void>(
-        context: context,
-        builder: (context) => const ComboRewardPopup(comboCount: 5, coinAmount: EconomyPolicy.fiveCorrectStreakBonusCoins),
-      );
-      return;
-    }
-    if (delta > 0.005) {
-      await showDialog<void>(
-        context: context,
-        builder: (context) => MemoryGrowthPopup(
-          before: _lastMemoryBefore(updated),
-          after: _memoryValue(updated),
-        ),
-      );
-    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('복습으로 넘겼어요. 코인은 지급되지 않습니다.')),
+    );
   }
 
   Future<void> _advance(QuizSessionState session) async {
@@ -160,6 +163,7 @@ class _StudyScreenState extends ConsumerState<StudyScreen> {
       return;
     }
     _textController.clear();
+    setState(() => _revealedAnswerQuestionId = null);
     ref.read(quizControllerProvider.notifier).goNext();
   }
 
@@ -179,6 +183,12 @@ class _StudyScreenState extends ConsumerState<StudyScreen> {
         );
     if (mounted) {
       _textController.clear();
+      setState(() => _revealedAnswerQuestionId = null);
+      final updated = ref.read(quizControllerProvider).asData?.value;
+      if (updated != null && updated.isSessionTerminal) {
+        await _advance(updated);
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('PASS 처리했어요.')));
     }
   }
@@ -209,13 +219,6 @@ class _StudyScreenState extends ConsumerState<StudyScreen> {
     return session.memoryUpdates.last.previousMemoryScore.clamp(0, 1);
   }
 
-  bool _hasFiveCorrectStreak(List<QuizAnswerResult> answers) {
-    if (answers.length < 5) {
-      return false;
-    }
-    return answers.reversed.take(5).every((answer) => answer.isCorrect);
-  }
-
   String _hintForIncorrect(Question question) {
     if (question.explanation.trim().isNotEmpty) {
       return question.explanation;
@@ -236,6 +239,9 @@ class _QuestionStudyView extends StatelessWidget {
     required this.onChanged,
     required this.onUseHint,
     required this.onCheckAnswer,
+    required this.onRevealAnswer,
+    required this.onUnknown,
+    required this.isAnswerRevealed,
     super.key,
   });
 
@@ -246,6 +252,9 @@ class _QuestionStudyView extends StatelessWidget {
   final ValueChanged<String> onChanged;
   final VoidCallback onUseHint;
   final VoidCallback onCheckAnswer;
+  final VoidCallback onRevealAnswer;
+  final VoidCallback onUnknown;
+  final bool isAnswerRevealed;
 
   @override
   Widget build(BuildContext context) {
@@ -336,6 +345,15 @@ class _QuestionStudyView extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         _AnswerInput(question: question, selectedAnswer: session.selectedAnswer, textController: textController, enabled: !session.isSaving, onChanged: onChanged),
+        const SizedBox(height: 12),
+        _AssistActions(
+          isSaving: session.isSaving,
+          isAnswerRevealed: isAnswerRevealed,
+          answer: question.answer,
+          explanation: question.explanation,
+          onRevealAnswer: onRevealAnswer,
+          onUnknown: onUnknown,
+        ),
         const SizedBox(height: 14),
         StudyPrimaryButton(
           label: session.isSaving ? '저장 중...' : '정답 확인',
@@ -396,6 +414,71 @@ class _AnswerInput extends StatelessWidget {
           ),
         ),
     };
+  }
+}
+
+class _AssistActions extends StatelessWidget {
+  const _AssistActions({
+    required this.isSaving,
+    required this.isAnswerRevealed,
+    required this.answer,
+    required this.explanation,
+    required this.onRevealAnswer,
+    required this.onUnknown,
+  });
+
+  final bool isSaving;
+  final bool isAnswerRevealed;
+  final String answer;
+  final String explanation;
+  final VoidCallback onRevealAnswer;
+  final VoidCallback onUnknown;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.mameroom;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: isSaving ? null : onUnknown,
+                icon: const Icon(Icons.help_outline_rounded),
+                label: const Text('모르겠어요'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: isSaving || isAnswerRevealed ? null : onRevealAnswer,
+                icon: const Icon(Icons.visibility_outlined),
+                label: const Text('정답 보기'),
+              ),
+            ),
+          ],
+        ),
+        if (isAnswerRevealed) ...[
+          const SizedBox(height: 10),
+          StudyCard(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('정답', style: Theme.of(context).textTheme.labelLarge?.copyWith(color: colors.primary)),
+                const SizedBox(height: 6),
+                Text(answer, style: Theme.of(context).textTheme.titleMedium),
+                if (explanation.trim().isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(explanation, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: colors.muted)),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
   }
 }
 
