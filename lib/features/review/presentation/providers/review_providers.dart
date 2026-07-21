@@ -1,13 +1,15 @@
-﻿import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 
 import '../../../../shared/supabase/supabase_client_provider.dart';
+import '../../../../core/config/env.dart';
 import '../../../coins/domain/entities/coin_wallet.dart';
 import '../../../coins/presentation/providers/coin_providers.dart';
 import '../../../streak/presentation/providers/streak_providers.dart';
 import '../../../quiz/domain/entities/question.dart';
 import '../../data/datasources/review_remote_data_source.dart';
 import '../../data/repositories/review_repository_impl.dart';
+import '../../data/repositories/mock_review_repository.dart';
 import '../../domain/entities/review_schedule.dart';
 import '../../domain/repositories/review_repository.dart';
 import '../../domain/usecases/review_usecase.dart';
@@ -21,6 +23,7 @@ final reviewRemoteDataSourceProvider = Provider<ReviewRemoteDataSource>((ref) {
 });
 
 final reviewRepositoryProvider = Provider<ReviewRepository>((ref) {
+  if (Env.useMockReview) return MockReviewRepository();
   return ReviewRepositoryImpl(
     remoteDataSource: ref.watch(reviewRemoteDataSourceProvider),
   );
@@ -31,9 +34,11 @@ final reviewUseCaseProvider = Provider<ReviewUseCase>((ref) {
 });
 
 final reviewControllerProvider =
-    StateNotifierProvider<ReviewController, AsyncValue<ReviewSessionState>>((ref) {
-  return ReviewController(ref);
-});
+    StateNotifierProvider<ReviewController, AsyncValue<ReviewSessionState>>((
+      ref,
+    ) {
+      return ReviewController(ref);
+    });
 
 class ReviewSessionState {
   const ReviewSessionState({
@@ -170,7 +175,9 @@ class ReviewController extends StateNotifier<AsyncValue<ReviewSessionState>> {
 
     final selected = value.selectedAnswer.trim();
     final isCorrect = _normalize(selected) == _normalize(item.question.answer);
-    final responseTimeMs = DateTime.now().difference(value.questionStartedAt).inMilliseconds;
+    final responseTimeMs = DateTime.now()
+        .difference(value.questionStartedAt)
+        .inMilliseconds;
     final answer = ReviewAnswerResult(
       item: item,
       selectedAnswer: selected,
@@ -180,7 +187,9 @@ class ReviewController extends StateNotifier<AsyncValue<ReviewSessionState>> {
 
     state = AsyncData(value.copyWith(isSaving: true));
     try {
-      final memoryUpdate = await _ref.read(reviewUseCaseProvider).completeReview(
+      final memoryUpdate = await _ref
+          .read(reviewUseCaseProvider)
+          .completeReview(
             item: item,
             selectedAnswer: selected,
             isCorrect: isCorrect,
@@ -205,24 +214,27 @@ class ReviewController extends StateNotifier<AsyncValue<ReviewSessionState>> {
   }) async {
     final value = state.asData?.value;
     final item = value?.currentItem;
-    if (value == null || item == null || value.isAnswerChecked || value.isSaving) {
+    if (value == null ||
+        item == null ||
+        value.isAnswerChecked ||
+        value.isSaving) {
       return;
     }
 
     state = AsyncData(value.copyWith(isSaving: true));
     try {
-      await _ref.read(reviewUseCaseProvider).passLearningItem(
-            item: item,
-            passType: passType,
-            reason: reason,
-          );
+      await _ref
+          .read(reviewUseCaseProvider)
+          .passLearningItem(item: item, passType: passType, reason: reason);
 
-      final updatedItems = value.items.where((candidate) {
-        if (passType == LearningPassType.question) {
-          return candidate.question.id != item.question.id;
-        }
-        return candidate.conceptId != item.conceptId;
-      }).toList(growable: false);
+      final updatedItems = value.items
+          .where((candidate) {
+            if (passType == LearningPassType.question) {
+              return candidate.question.id != item.question.id;
+            }
+            return candidate.conceptId != item.conceptId;
+          })
+          .toList(growable: false);
       final nextIndex = updatedItems.isEmpty
           ? 0
           : value.currentIndex.clamp(0, updatedItems.length - 1).toInt();
@@ -241,15 +253,21 @@ class ReviewController extends StateNotifier<AsyncValue<ReviewSessionState>> {
       state = AsyncError(error, stackTrace);
     }
   }
+
   Future<void> awardCompletionRewards() async {
     final value = state.asData?.value;
-    if (value == null || value.items.isEmpty || value.rewardsAwarded || value.isRewarding) {
+    if (value == null ||
+        value.items.isEmpty ||
+        value.rewardsAwarded ||
+        value.isRewarding) {
       return;
     }
 
     state = AsyncData(value.copyWith(isRewarding: true));
     try {
-      var reward = await _ref.read(coinUseCaseProvider).awardReviewCompletion(
+      var reward = await _ref
+          .read(coinUseCaseProvider)
+          .awardReviewCompletion(
             reviewSessionId: value.items.first.id,
             answers: value.answers
                 .map(

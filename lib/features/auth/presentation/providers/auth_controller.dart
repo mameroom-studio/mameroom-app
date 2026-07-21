@@ -4,11 +4,7 @@ import 'package:flutter_riverpod/legacy.dart';
 import '../../domain/entities/app_user.dart';
 import 'auth_providers.dart';
 
-enum AuthSubmitResult {
-  signedIn,
-  signedOut,
-  emailConfirmationRequired,
-}
+enum AuthSubmitResult { signedIn, signedOut, emailConfirmationRequired }
 
 class AuthFormState {
   const AuthFormState({
@@ -18,9 +14,9 @@ class AuthFormState {
   });
 
   const AuthFormState.idle()
-      : isLoading = false,
-        errorMessage = null,
-        infoMessage = null;
+    : isLoading = false,
+      errorMessage = null,
+      infoMessage = null;
 
   final bool isLoading;
   final String? errorMessage;
@@ -42,8 +38,8 @@ class AuthFormState {
 
 final authControllerProvider =
     StateNotifierProvider<AuthController, AuthFormState>((ref) {
-  return AuthController(ref);
-});
+      return AuthController(ref);
+    });
 
 class AuthController extends StateNotifier<AuthFormState> {
   AuthController(this._ref) : super(const AuthFormState.idle());
@@ -57,10 +53,9 @@ class AuthController extends StateNotifier<AuthFormState> {
     state = const AuthFormState(isLoading: true);
 
     try {
-      final AppUser? user = await _ref.read(authUseCaseProvider).signInWithEmail(
-            email: email,
-            password: password,
-          );
+      final AppUser? user = await _ref
+          .read(authUseCaseProvider)
+          .signInWithEmail(email: email, password: password);
       if (user == null) {
         throw StateError('Sign-in did not return a session.');
       }
@@ -68,10 +63,7 @@ class AuthController extends StateNotifier<AuthFormState> {
       state = const AuthFormState.idle();
       return AuthSubmitResult.signedIn;
     } catch (error) {
-      state = AuthFormState(
-        isLoading: false,
-        errorMessage: _messageFor(error),
-      );
+      state = AuthFormState(isLoading: false, errorMessage: _messageFor(error));
       rethrow;
     }
   }
@@ -79,13 +71,24 @@ class AuthController extends StateNotifier<AuthFormState> {
   Future<AuthSubmitResult> signUp({
     required String email,
     required String password,
+    required String nickname,
+    required DateTime age14ConfirmedAt,
   }) async {
     state = const AuthFormState(isLoading: true);
 
     try {
-      final AppUser? user = await _ref.read(authUseCaseProvider).signUpWithEmail(
+      final AppUser? user = await _ref
+          .read(authUseCaseProvider)
+          .signUpWithEmail(
             email: email,
             password: password,
+            data: {
+              'nickname': nickname,
+              'age_14_confirmed_at': age14ConfirmedAt.toIso8601String(),
+              'policy_version': '1.0',
+              'terms_version': '1.0',
+              'privacy_version': '1.0',
+            },
           );
 
       if (user == null) {
@@ -99,10 +102,7 @@ class AuthController extends StateNotifier<AuthFormState> {
       state = const AuthFormState.idle();
       return AuthSubmitResult.signedIn;
     } catch (error) {
-      state = AuthFormState(
-        isLoading: false,
-        errorMessage: _messageFor(error),
-      );
+      state = AuthFormState(isLoading: false, errorMessage: _messageFor(error));
       rethrow;
     }
   }
@@ -115,10 +115,7 @@ class AuthController extends StateNotifier<AuthFormState> {
       state = const AuthFormState.idle();
       return AuthSubmitResult.signedOut;
     } catch (error) {
-      state = AuthFormState(
-        isLoading: false,
-        errorMessage: _messageFor(error),
-      );
+      state = AuthFormState(isLoading: false, errorMessage: _messageFor(error));
       rethrow;
     }
   }

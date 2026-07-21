@@ -1,8 +1,11 @@
-﻿import 'dart:math';
+import 'dart:math';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../shared/supabase/supabase_tables.dart';
+import '../../../../core/config/env.dart';
+import '../../../memory_engine/data/datasources/memory_engine_remote_data_source.dart';
+import '../../../memory_engine/domain/entities/memory_engine_result.dart';
 import '../../../quiz/data/models/question_model.dart';
 import '../../../quiz/domain/entities/question.dart';
 import '../../domain/entities/review_schedule.dart';
@@ -19,10 +22,46 @@ class ReviewRemoteDataSource {
       throw StateError('User session is required to load reviews.');
     }
 
+    if (Env.useMemoryEngineV2(user.id)) {
+      final payload = await MemoryEngineRemoteDataSource(_client).loadDue();
+      final items = payload['items'];
+      if (items is! List) return const [];
+      return items
+          .map((raw) {
+            final row = Map<String, dynamic>.from(raw as Map);
+            final question = QuestionModel.fromJson({
+              'id': row['question_id'],
+              'material_id': row['material_id'],
+              'concept_id': row['concept_id'],
+              'section_id': row['section_id'],
+              'type': row['type'],
+              'question_text': row['question_text'],
+              'options': row['options'],
+              'answer': row['answer'],
+              'explanation': row['explanation'],
+              'evidence': row['evidence'],
+              'difficulty': row['question_difficulty'],
+              'order_index': row['order_index'],
+            });
+            return ReviewScheduleModel(
+              id: row['memory_state_id'].toString(),
+              materialId: row['material_id'].toString(),
+              conceptId: row['concept_id'].toString(),
+              memoryStateId: row['memory_state_id'].toString(),
+              scheduledAt: DateTime.parse(row['due_at'].toString()).toUtc(),
+              memoryScore: _doubleFrom(row['legacy_memory_score']),
+              question: question,
+            );
+          })
+          .toList(growable: false);
+    }
+
     final now = DateTime.now().toUtc();
     final schedules = await _client
         .from(SupabaseTables.reviewSchedules)
-        .select('id,material_id,concept_id,memory_state_id,scheduled_at,memory_states!inner(memory_score,next_review_at)')
+        .select(
+          'id,material_id,concept_id,memory_state_id,scheduled_at,memory_states!inner(memory_score,next_review_at)',
+        )
         .eq('user_id', user.id)
         .eq('status', 'scheduled')
         .lte('scheduled_at', now.toIso8601String())
@@ -43,35 +82,44 @@ class ReviewRemoteDataSource {
 
     final questionRows = await _client
         .from(SupabaseTables.questions)
-        .select('id,material_id,concept_id,section_id,type,question_text,options,answer,explanation,evidence,difficulty,order_index')
+        .select(
+          'id,material_id,concept_id,section_id,type,question_text,options,answer,explanation,evidence,difficulty,order_index',
+        )
         .eq('user_id', user.id)
         .eq('initial_batch', true)
-        .neq('type', 'ox')
-        .inFilter('type', const ['short_answer', 'multiple_choice', 'fill_blank'])
+        .eq('type', 'multiple_choice')
         .inFilter('material_id', materialIds);
 
     final passFilter = await _loadPassFilter(userId: user.id);
     final questions = questionRows
-        .map((row) => QuestionModel.fromJson(Map<String, dynamic>.from(row as Map)))
+        .map(
+          (row) =>
+              QuestionModel.fromJson(Map<String, dynamic>.from(row as Map)),
+        )
         .where(passFilter.allowsQuestion)
+        .where(_isEligibleMultipleChoice)
         .toList(growable: false);
 
     final items = <ReviewScheduleModel>[];
     for (final schedule in scheduleRows) {
-      final question = questions.where((candidate) {
-        return candidate.materialId == schedule['material_id'] &&
-            candidate.conceptId == schedule['concept_id'];
-      }).fold<QuestionModel?>(null, (current, candidate) {
-        if (current == null || candidate.orderIndex < current.orderIndex) {
-          return candidate;
-        }
-        return current;
-      });
+      final question = questions
+          .where((candidate) {
+            return candidate.materialId == schedule['material_id'] &&
+                candidate.conceptId == schedule['concept_id'];
+          })
+          .fold<QuestionModel?>(null, (current, candidate) {
+            if (current == null || candidate.orderIndex < current.orderIndex) {
+              return candidate;
+            }
+            return current;
+          });
 
       if (question == null) {
         continue;
       }
-      items.add(ReviewScheduleModel.fromParts(schedule: schedule, question: question));
+      items.add(
+        ReviewScheduleModel.fromParts(schedule: schedule, question: question),
+      );
     }
 
     items.sort((a, b) {
@@ -84,6 +132,18 @@ class ReviewRemoteDataSource {
     return items;
   }
 
+  bool _isEligibleMultipleChoice(Question question) {
+    if (question.type != QuizQuestionType.multipleChoice ||
+        question.options.length < 2 ||
+        question.answer.trim().isEmpty) {
+      return false;
+    }
+    final answer = question.answer.trim().toLowerCase();
+    return question.options.any(
+      (option) => option.trim().toLowerCase() == answer,
+    );
+  }
+
   Future<MemoryUpdate> completeReview({
     required ReviewSchedule item,
     required String selectedAnswer,
@@ -93,6 +153,25 @@ class ReviewRemoteDataSource {
     final user = _client.auth.currentUser;
     if (user == null) {
       throw StateError('User session is required to complete reviews.');
+    }
+
+    if (Env.useMemoryEngineV2(user.id)) {
+      final result = await MemoryEngineRemoteDataSource(_client).submit(
+        MemoryEngineSubmission(
+          questionId: item.question.id,
+          selectedAnswer: selectedAnswer,
+          isCorrect: isCorrect,
+          responseTimeMs: responseTimeMs,
+          retryCount: 0,
+          hintLevel: 0,
+        ),
+      );
+      return MemoryUpdate(
+        conceptId: item.conceptId,
+        previousMemoryScore: item.memoryScore,
+        memoryScore: item.memoryScore,
+        nextReviewAt: result.dueAt ?? result.reviewedAt,
+      );
     }
 
     await _client.from(SupabaseTables.quizAttempts).insert({
@@ -130,6 +209,13 @@ class ReviewRemoteDataSource {
       throw StateError('User session is required to pass learning items.');
     }
 
+    if (Env.useMemoryEngineV2(user.id)) {
+      await MemoryEngineRemoteDataSource(_client).pass(
+        MemoryEnginePass(questionId: item.question.id, reason: reason.value),
+      );
+      return;
+    }
+
     var query = _client
         .from(SupabaseTables.learningPasses)
         .select('id')
@@ -143,7 +229,9 @@ class ReviewRemoteDataSource {
     final row = {
       'user_id': user.id,
       'material_id': item.materialId,
-      'question_id': passType == LearningPassType.question ? item.question.id : null,
+      'question_id': passType == LearningPassType.question
+          ? item.question.id
+          : null,
       'concept_id': item.conceptId,
       'pass_type': passType.value,
       'reason': reason.value,
@@ -183,15 +271,18 @@ class ReviewRemoteDataSource {
     final conceptIds = <String>{};
     for (final row in rows) {
       final map = Map<String, dynamic>.from(row as Map);
-      if (map['pass_type'] == LearningPassType.question.value && map['question_id'] != null) {
+      if (map['pass_type'] == LearningPassType.question.value &&
+          map['question_id'] != null) {
         questionIds.add(map['question_id'].toString());
       }
-      if (map['pass_type'] == LearningPassType.concept.value && map['concept_id'] != null) {
+      if (map['pass_type'] == LearningPassType.concept.value &&
+          map['concept_id'] != null) {
         conceptIds.add(map['concept_id'].toString());
       }
     }
     return _PassFilter(questionIds: questionIds, conceptIds: conceptIds);
   }
+
   Future<MemoryUpdate> _upsertMemoryState({
     required String userId,
     required String materialId,
@@ -341,6 +432,7 @@ class ReviewRemoteDataSource {
 
   double _clamp01(double value) => value.clamp(0, 1).toDouble();
 }
+
 class _PassFilter {
   const _PassFilter({required this.questionIds, required this.conceptIds});
 
@@ -348,6 +440,7 @@ class _PassFilter {
   final Set<String> conceptIds;
 
   bool allowsQuestion(Question question) {
-    return !questionIds.contains(question.id) && !conceptIds.contains(question.conceptId);
+    return !questionIds.contains(question.id) &&
+        !conceptIds.contains(question.conceptId);
   }
 }

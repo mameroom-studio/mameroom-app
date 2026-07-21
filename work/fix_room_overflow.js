@@ -1,0 +1,13 @@
+﻿const fs = require('fs');
+const path = require('path');
+const roomFile = path.join(process.cwd(), 'lib/features/gamification/presentation/pages/room_page.dart');
+let s = fs.readFileSync(roomFile, 'utf8');
+s = s.replace('      height: 92,', '      height: 104,');
+s = s.replace(/final roomHeight = \(height \* \(dense \? 0\.41 : 0\.43\)\)\.clamp\(300\.0, 382\.0\);/, 'final roomHeight = (height * (dense ? 0.39 : 0.41)).clamp(292.0, 368.0);');
+s = s.replace('        width: 72,\n        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),', '        width: 76,\n        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),');
+s = s.replace('            Icon(_iconFor(layout.item.itemType), color: itemColor, size: 21),\n            const SizedBox(height: 3),', '            Icon(_iconFor(layout.item.itemType), color: itemColor, size: 19),\n            const SizedBox(height: 2),');
+fs.writeFileSync(roomFile, s);
+const testFile = path.join(process.cwd(), 'test/features/home/room_page_test.dart');
+let t = fs.readFileSync(testFile, 'utf8');
+t = t.replace('\n_overrides(MyRoomState room) {', '\n// ignore: strict_top_level_inference\n_overrides(MyRoomState room) {');
+fs.writeFileSync(testFile, t);

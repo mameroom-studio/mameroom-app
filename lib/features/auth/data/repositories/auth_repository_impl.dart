@@ -56,10 +56,12 @@ class AuthRepositoryImpl implements AuthRepository {
   Future<AppUser?> signUpWithEmail({
     required String email,
     required String password,
+    Map<String, dynamic>? data,
   }) async {
     final response = await _requireDataSource.signUpWithEmail(
       email: email,
       password: password,
+      data: data,
     );
     final user = response.session?.user;
     if (user == null) {

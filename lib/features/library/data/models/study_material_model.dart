@@ -22,11 +22,11 @@ class StudyMaterialModel extends StudyMaterial {
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'title': title,
-        'section_count': sectionCount,
-        'progress_percent': progressPercent,
-        'memory_percent': memoryPercent,
-        'next_review_label': nextReviewLabel,
-      };
+    'id': id,
+    'title': title,
+    'section_count': sectionCount,
+    'progress_percent': progressPercent,
+    'memory_percent': memoryPercent,
+    'next_review_label': nextReviewLabel,
+  };
 }

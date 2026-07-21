@@ -55,3 +55,8 @@ supabase secrets set OPENAI_MODEL=gpt-4.1-mini
 - AI2 first quiz generation is performed only by the Supabase Edge Function named `generate-first-quiz`.
 - AI2 first quiz success stores `study_materials.status = completed` after `questions_generating`.
 - `.env` is bundled into Flutter builds, so store only public client configuration such as the Supabase publishable key.
+## Roadmap
+
+### Post-MVP Candidate
+
+- **Study Plan**: The MVP learning flow is complete with material upload, study, review, wrong notes, and recent-quiz resume. Reconsider Study Plan only after validating explicit user demand.

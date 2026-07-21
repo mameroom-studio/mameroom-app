@@ -11,24 +11,25 @@ import '../../domain/usecases/analysis_usecase.dart';
 
 final coreConceptExtractionDataSourceProvider =
     Provider<CoreConceptExtractionDataSource>((ref) {
-  final client = ref.watch(supabaseClientProvider);
-  if (client == null) {
-    throw StateError('Supabase client is not initialized.');
-  }
-  return CoreConceptExtractionDataSource(client);
-});
-
+      final client = ref.watch(supabaseClientProvider);
+      if (client == null) {
+        throw StateError('Supabase client is not initialized.');
+      }
+      return CoreConceptExtractionDataSource(client);
+    });
 
 final firstQuizGenerationDataSourceProvider =
     Provider<FirstQuizGenerationDataSource>((ref) {
-  final client = ref.watch(supabaseClientProvider);
-  if (client == null) {
-    throw StateError('Supabase client is not initialized.');
-  }
-  return FirstQuizGenerationDataSource(client);
-});
+      final client = ref.watch(supabaseClientProvider);
+      if (client == null) {
+        throw StateError('Supabase client is not initialized.');
+      }
+      return FirstQuizGenerationDataSource(client);
+    });
 
-final analysisRemoteDataSourceProvider = Provider<AnalysisRemoteDataSource>((ref) {
+final analysisRemoteDataSourceProvider = Provider<AnalysisRemoteDataSource>((
+  ref,
+) {
   final client = ref.watch(supabaseClientProvider);
   if (client == null) {
     throw StateError('Supabase client is not initialized.');
@@ -52,9 +53,12 @@ final analysisUseCaseProvider = Provider<AnalysisUseCase>((ref) {
 });
 
 final analysisControllerProvider =
-    StateNotifierProvider.autoDispose<AnalysisController, AsyncValue<AnalysisProgress?>>((ref) {
-  return AnalysisController(ref);
-});
+    StateNotifierProvider.autoDispose<
+      AnalysisController,
+      AsyncValue<AnalysisProgress?>
+    >((ref) {
+      return AnalysisController(ref);
+    });
 
 class AnalysisController extends StateNotifier<AsyncValue<AnalysisProgress?>> {
   AnalysisController(this._ref) : super(const AsyncData(null));
@@ -71,14 +75,16 @@ class AnalysisController extends StateNotifier<AsyncValue<AnalysisProgress?>> {
     state = AsyncData(
       AnalysisProgress(
         materialId: materialId,
-        status: MaterialAnalysisStatus.uploaded,
+        status: MaterialAnalysisStatus.uploading,
         progress: 0.08,
         message: 'Preparing analysis.',
       ),
     );
 
     try {
-      final result = await _ref.read(analysisUseCaseProvider).runFastPathAnalysis(
+      final result = await _ref
+          .read(analysisUseCaseProvider)
+          .runFastPathAnalysis(
             materialId: materialId,
             onProgress: (progress) => state = AsyncData(progress),
           );

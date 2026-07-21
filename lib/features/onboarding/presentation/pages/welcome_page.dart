@@ -21,28 +21,28 @@ class WelcomePage extends ConsumerStatefulWidget {
 class _WelcomePageState extends ConsumerState<WelcomePage> {
   static const _steps = <_OnboardingStep>[
     _OnboardingStep(
-      title: '怨듬???湲덈갑 ?딇?吏묐땲??',
-      icon: '?뱴',
-      description: '?ㅻ뒛 怨듬????댁슜,\n?쇰쭏??湲곗뼲?섍퀬 怨꾩떊媛??',
+      title: '공부는 금방 잊혀집니다.',
+      icon: '📚',
+      description: '오늘 공부한 내용,\n얼마나 기억하고 계신가요?',
     ),
     _OnboardingStep(
-      title: 'AI媛 湲곗뼲??留뚮뱾?댁쨳?덈떎.',
-      icon: '?쭬',
-      description: 'PDF瑜??낅줈?쒗븯硫?nAI媛 湲곗뼲 臾몄젣瑜??앹꽦?⑸땲??',
+      title: 'AI가 기억을 만들어줍니다.',
+      icon: '🧠',
+      description: 'PDF를 업로드하면\nAI가 기억 문제를 생성합니다.',
     ),
     _OnboardingStep(
-      title: '湲곗뼲? ?⑥븮???⑸땲??',
-      icon: '?뙮',
-      description: '?섎굹??湲곗뼲?\n?섎굹???⑥븮???⑸땲??',
+      title: '기억은 씨앗이 됩니다.',
+      icon: '🌱',
+      description: '하나의 기억은\n하나의 씨앗이 됩니다.',
     ),
     _OnboardingStep(
-      title: '?뱀떊留뚯쓽 諛⑹씠 ?깆옣?⑸땲??',
-      icon: '?룧',
-      description: '怨듬?媛 湲곕줉???섍퀬,\n湲곕줉??異붿뼲???⑸땲??',
+      title: '당신만의 방이 성장합니다.',
+      icon: '🏠',
+      description: '공부가 기록이 되고,\n기록이 추억이 됩니다.',
     ),
     _OnboardingStep(
-      title: '?뱀떊??泥?湲곗뼲???ъ뼱蹂쇨퉴??',
-      icon: '?뙮',
+      title: '당신의 첫 기억을 심어볼까요?',
+      icon: '🌱',
       description: '',
       isFinal: true,
     ),
@@ -75,7 +75,7 @@ class _WelcomePageState extends ConsumerState<WelcomePage> {
               alignment: Alignment.centerRight,
               child: TextButton(
                 onPressed: _isCompleting ? null : _finishOnboarding,
-                child: const Text('嫄대꼫?곌린'),
+                child: const Text('건너뛰기'),
               ),
             ),
             Expanded(
@@ -90,7 +90,7 @@ class _WelcomePageState extends ConsumerState<WelcomePage> {
             ),
             const SizedBox(height: 18),
             MameroomPrimaryButton(
-              label: step.isFinal ? '?쒖옉?섍린' : '?ㅼ쓬',
+              label: step.isFinal ? '시작하기' : '다음',
               isLoading: _isCompleting,
               onPressed: _completeOnboarding,
             ),

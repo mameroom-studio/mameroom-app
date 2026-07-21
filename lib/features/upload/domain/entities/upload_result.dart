@@ -1,3 +1,5 @@
+enum UploadTransferStage { saving, uploadingPdf, extractingPdfText }
+
 class UploadResult {
   const UploadResult({
     required this.materialId,

@@ -4,13 +4,19 @@ import '../datasources/quiz_remote_data_source.dart';
 
 class QuizRepositoryImpl implements QuizRepository {
   const QuizRepositoryImpl({required QuizRemoteDataSource remoteDataSource})
-      : _remoteDataSource = remoteDataSource;
+    : _remoteDataSource = remoteDataSource;
 
   final QuizRemoteDataSource _remoteDataSource;
 
   @override
-  Future<QuizInitialLoad> loadInitialQuestions({required String materialId}) {
-    return _remoteDataSource.loadInitialQuestions(materialId: materialId);
+  Future<QuizInitialLoad> loadInitialQuestions({
+    required String materialId,
+    bool unlearnedOnly = false,
+  }) {
+    return _remoteDataSource.loadInitialQuestions(
+      materialId: materialId,
+      unlearnedOnly: unlearnedOnly,
+    );
   }
 
   @override
@@ -46,6 +52,7 @@ class QuizRepositoryImpl implements QuizRepository {
       feedbackType: feedbackType,
     );
   }
+
   @override
   Future<void> passLearningItem({
     required String materialId,

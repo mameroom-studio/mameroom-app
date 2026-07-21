@@ -1,0 +1,6 @@
+select jsonb_build_object(
+  'tables', (select jsonb_agg(table_name order by table_name) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'),
+  'storage_buckets', (select jsonb_agg(jsonb_build_object('id',id,'public',public) order by id) from storage.buckets),
+  'study_fks', (select jsonb_agg(jsonb_build_object('table',tc.table_name,'constraint',tc.constraint_name,'delete_rule',rc.delete_rule) order by tc.table_name,tc.constraint_name) from information_schema.table_constraints tc join information_schema.referential_constraints rc on rc.constraint_schema=tc.constraint_schema and rc.constraint_name=tc.constraint_name join information_schema.constraint_column_usage ccu on ccu.constraint_schema=tc.constraint_schema and ccu.constraint_name=tc.constraint_name where tc.table_schema='public' and tc.constraint_type='FOREIGN KEY' and (tc.table_name='study_materials' or ccu.table_name='study_materials')),
+  'delete_functions', (select jsonb_agg(p.proname order by p.proname) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and (p.proname ilike '%delete%' or p.proname ilike '%withdraw%'))
+) as audit;

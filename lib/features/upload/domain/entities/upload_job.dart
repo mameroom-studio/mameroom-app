@@ -1,11 +1,6 @@
 import 'dart:typed_data';
 
-enum UploadSourceType {
-  pdf,
-  image,
-  camera,
-  text,
-}
+enum UploadSourceType { pdf, image, camera, text }
 
 class UploadJob {
   const UploadJob({

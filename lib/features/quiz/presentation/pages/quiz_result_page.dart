@@ -1,11 +1,13 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../../shared/widgets/reward_feedback_overlay.dart';
-import '../../../library/presentation/pages/library_page.dart';
+import '../../../../shared/design_system/theme/mameroom_theme_extension.dart';
+import '../../../../shared/widgets/mameroom_shell.dart';
+import '../../../home/presentation/pages/home_shell_page.dart';
 import '../../../memory_seed/domain/entities/memory_seed.dart';
 import '../../../memory_seed/presentation/providers/memory_seed_providers.dart';
+import '../../../study/presentation/widgets/study_flow_components.dart';
 import '../../domain/entities/quiz_result_snapshot.dart';
 import '../providers/quiz_providers.dart';
 
@@ -29,7 +31,8 @@ class _QuizResultPageState extends ConsumerState<QuizResultPage> {
   Widget build(BuildContext context) {
     final state = ref.watch(quizControllerProvider);
     final session = state.asData?.value;
-    final effectiveSnapshot = widget.snapshot ??
+    final effectiveSnapshot =
+        widget.snapshot ??
         (session == null ? null : QuizResultSnapshot.fromSession(session));
     final summary = effectiveSnapshot?.summary;
 
@@ -37,7 +40,9 @@ class _QuizResultPageState extends ConsumerState<QuizResultPage> {
       _seedGrowthRequested = true;
       Future.microtask(() async {
         try {
-          final result = await ref.read(memorySeedControllerProvider.notifier).applyQuizResultGrowth(
+          final result = await ref
+              .read(memorySeedControllerProvider.notifier)
+              .applyQuizResultGrowth(
                 correctCount: summary.correctCount,
                 totalCount: summary.totalCount,
                 accuracy: summary.accuracy,
@@ -53,126 +58,73 @@ class _QuizResultPageState extends ConsumerState<QuizResultPage> {
       });
     }
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('학습 결과')),
-      body: SafeArea(
-        child: summary == null || effectiveSnapshot == null
-            ? const Center(child: Text('학습 결과를 찾을 수 없어요.'))
-            : SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text('오늘의 기억', style: Theme.of(context).textTheme.headlineMedium),
-                    if (effectiveSnapshot.rewardWarning != null) ...[
-                      const SizedBox(height: 12),
-                      _WarningBanner(message: effectiveSnapshot.rewardWarning!),
-                    ],
-                    const SizedBox(height: 18),
-                    _ResultTile(
-                      icon: Icons.check_circle_outline,
-                      label: '정답 수',
-                      value: '${summary.correctCount} / ${summary.totalCount}',
+    return MameroomShell(
+      showSparkles: true,
+      padding: EdgeInsets.zero,
+      child: summary == null || effectiveSnapshot == null
+          ? const Center(child: Text('학습 결과를 찾을 수 없어요.'))
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight - 42,
                     ),
-                    _ResultTile(
-                      icon: Icons.percent_rounded,
-                      label: '정확도',
-                      value: '${(summary.accuracy * 100).round()}%',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        QuizResultSummaryCard(
+                          correct: summary.correctCount,
+                          incorrect: summary.totalCount - summary.correctCount,
+                          passed: _passedCount(session),
+                          accuracy: (summary.accuracy * 100).round(),
+                          coin: effectiveSnapshot.coinReward.earnedCoins,
+                          memoryBefore: _percent(
+                            effectiveSnapshot.averageMemoryScore,
+                          ),
+                          memoryAfter: _percent(
+                            effectiveSnapshot.averageMemoryScore +
+                                effectiveSnapshot.averageMemoryDelta,
+                          ),
+                          seedGrowth: _percent(
+                            effectiveSnapshot.averageMemoryDelta.abs(),
+                          ),
+                          onHome: () => context.go(HomeShellPage.homeRoutePath),
+                        ),
+                        if (effectiveSnapshot.rewardWarning != null) ...[
+                          const SizedBox(height: 12),
+                          _WarningBanner(
+                            message: effectiveSnapshot.rewardWarning!,
+                          ),
+                        ],
+                        const SizedBox(height: 14),
+                        _SeedResultCard(
+                          progress: _seedGrowthResult?.seed.progress ?? 0.65,
+                          completed: _seedGrowthResult?.completedNow ?? false,
+                        ),
+                        if (_seedGrowthError != null) ...[
+                          const SizedBox(height: 12),
+                          _WarningBanner(message: 'Seed 성장 기록은 잠시 보류되었어요.'),
+                        ],
+                      ],
                     ),
-                    _ResultTile(
-                      icon: Icons.spa_outlined,
-                      label: '기억률 변화',
-                      value: _formatDelta(effectiveSnapshot.averageMemoryDelta),
-                    ),
-                    _ResultTile(
-                      icon: Icons.monetization_on_outlined,
-                      label: '획득 코인',
-                      value: '+${effectiveSnapshot.coinReward.earnedCoins}',
-                      animated: true,
-                    ),
-                    _ResultTile(
-                      icon: Icons.event_available_outlined,
-                      label: '다음 복습',
-                      value: _formatReviewTime(effectiveSnapshot.nextReviewAt),
-                    ),
-                    _ResultTile(
-                      icon: Icons.local_florist_outlined,
-                      label: 'Seed 성장',
-                      value: _seedGrowthLabel(),
-                    ),
-                    if (_seedGrowthResult != null) ...[
-                      const SizedBox(height: 8),
-                      _SeedSummary(seedGrowth: _seedGrowthResult!),
-                    ],
-                    const SizedBox(height: 22),
-                    FilledButton.icon(
-                      onPressed: () => context.go(LibraryPage.routePath),
-                      icon: const Icon(Icons.home_rounded),
-                      label: const Text('라이브러리로 돌아가기'),
-                    ),
-                  ],
-                ),
-              ),
-      ),
-    );
-  }
-
-  String _formatDelta(double value) {
-    final percent = (value * 100).round();
-    return percent >= 0 ? '+$percent%' : '$percent%';
-  }
-
-  String _formatReviewTime(DateTime? value) {
-    if (value == null) {
-      return '예정 없음';
-    }
-    final local = value.toLocal();
-    final date = '${local.month.toString().padLeft(2, '0')}/${local.day.toString().padLeft(2, '0')}';
-    final time = '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
-    return '$date $time';
-  }
-
-  String _seedGrowthLabel() {
-    final error = _seedGrowthError;
-    final result = _seedGrowthResult;
-    if (error != null) {
-      return '기록 보류';
-    }
-    if (result == null) {
-      return '계산 중';
-    }
-    final suffix = result.completedNow ? ' · 완성' : ' · ${result.seed.stageLabel}';
-    return '+${result.growthDelta}$suffix';
-  }
-}
-
-class _SeedSummary extends StatelessWidget {
-  const _SeedSummary({required this.seedGrowth});
-
-  final MemorySeedGrowthResult seedGrowth;
-
-  @override
-  Widget build(BuildContext context) {
-    final seed = seedGrowth.seed;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(seed.seedTypeLabel, style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            LinearProgressIndicator(value: seed.progress),
-            const SizedBox(height: 8),
-            Text(
-              seedGrowth.completedNow
-                  ? 'Seed가 완성되었어요. 추후 Arboretum으로 이동할 수 있어요.'
-                  : '${seed.stageLabel} 단계 · ${seed.growthValue}/${seed.maxGrowthValue}',
+                  ),
+                );
+              },
             ),
-          ],
-        ),
-      ),
     );
+  }
+
+  int _percent(double value) {
+    return (value.clamp(0.0, 1.0) * 100).round();
+  }
+
+  int _passedCount(QuizSessionState? session) {
+    if (session == null) {
+      return 0;
+    }
+    return session.passedInitialQuestionIds.length;
   }
 }
 
@@ -183,49 +135,69 @@ class _WarningBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
+    final colors = context.mameroom;
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: colors.errorContainer,
-        borderRadius: BorderRadius.circular(8),
+        color: Theme.of(context).colorScheme.errorContainer,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: colors.line),
       ),
       child: Text(
         message,
         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: colors.onErrorContainer,
-              fontWeight: FontWeight.w700,
-            ),
+          color: Theme.of(context).colorScheme.onErrorContainer,
+          fontWeight: FontWeight.w800,
+        ),
       ),
     );
   }
 }
 
-class _ResultTile extends StatelessWidget {
-  const _ResultTile({
-    required this.icon,
-    required this.label,
-    required this.value,
-    this.animated = false,
-  });
+class _SeedResultCard extends StatelessWidget {
+  const _SeedResultCard({required this.progress, required this.completed});
 
-  final IconData icon;
-  final String label;
-  final String value;
-  final bool animated;
+  final double progress;
+  final bool completed;
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: Icon(icon),
-      title: Text(label),
-      trailing: animated
-          ? RewardAnimatedValue(
-              value: value,
-              style: Theme.of(context).textTheme.titleMedium,
-            )
-          : Text(value, style: Theme.of(context).textTheme.titleMedium),
+    final colors = context.mameroom;
+    return StudyFlowCard(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const PixelSeedHero(size: 104, mood: SeedMood.growth),
+          const SizedBox(height: 10),
+          Text(
+            completed
+                ? '\u0053eed\uAC00 \uC644\uC131\uB418\uC5C8\uC5B4\uC694!'
+                : '\u0053eed\uAC00 \uC131\uC7A5\uD588\uC5B4\uC694!',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: colors.ink,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: progress.clamp(0, 1),
+              minHeight: 9,
+              color: colors.primary,
+              backgroundColor: colors.primaryMist.withValues(alpha: 0.55),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '${(progress.clamp(0, 1) * 100).round()}%',
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: colors.primary,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

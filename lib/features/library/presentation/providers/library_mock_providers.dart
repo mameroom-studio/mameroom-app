@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../shared/supabase/supabase_client_provider.dart';
 import '../../../../shared/supabase/supabase_tables.dart';
 import '../../domain/entities/study_material.dart';
+import 'library_providers.dart';
 
 class RecentStudyRecord {
   const RecentStudyRecord({
@@ -32,10 +33,20 @@ class LibraryDashboard {
 
 final useEmptyLibraryMockProvider = Provider<bool>((ref) => false);
 
+typedef DeleteStudyMaterial = Future<void> Function(StudyMaterial material);
+
+final deleteStudyMaterialProvider = Provider<DeleteStudyMaterial>((ref) {
+  return (material) async {
+    await ref.read(libraryUseCaseProvider).deleteStudyMaterial(material.id);
+  };
+});
+
 final libraryDashboardProvider = FutureProvider<LibraryDashboard>((ref) async {
   final client = ref.watch(supabaseClientProvider);
   final user = client?.auth.currentUser;
-  if (client == null || user == null || ref.watch(useEmptyLibraryMockProvider)) {
+  if (client == null ||
+      user == null ||
+      ref.watch(useEmptyLibraryMockProvider)) {
     return const LibraryDashboard(
       todayReviewCount: 0,
       totalMemoryPercent: 0,
@@ -78,7 +89,8 @@ final libraryDashboardProvider = FutureProvider<LibraryDashboard>((ref) async {
     final map = Map<String, dynamic>.from(row as Map);
     final materialId = map['material_id']?.toString();
     if (materialId == null) continue;
-    questionCountByMaterial[materialId] = (questionCountByMaterial[materialId] ?? 0) + 1;
+    questionCountByMaterial[materialId] =
+        (questionCountByMaterial[materialId] ?? 0) + 1;
   }
 
   final completedQuestionIdsByMaterial = <String, Set<String>>{};
@@ -89,10 +101,14 @@ final libraryDashboardProvider = FutureProvider<LibraryDashboard>((ref) async {
     final questionId = map['question_id']?.toString();
     if (materialId == null) continue;
     if (questionId != null) {
-      completedQuestionIdsByMaterial.putIfAbsent(materialId, () => <String>{}).add(questionId);
+      completedQuestionIdsByMaterial
+          .putIfAbsent(materialId, () => <String>{})
+          .add(questionId);
     }
     final attemptedAt = _dateFrom(map['attempted_at']);
-    if (attemptedAt != null && (latestAttemptByMaterial[materialId] == null || attemptedAt.isAfter(latestAttemptByMaterial[materialId]!))) {
+    if (attemptedAt != null &&
+        (latestAttemptByMaterial[materialId] == null ||
+            attemptedAt.isAfter(latestAttemptByMaterial[materialId]!))) {
       latestAttemptByMaterial[materialId] = attemptedAt;
     }
   }
@@ -104,35 +120,49 @@ final libraryDashboardProvider = FutureProvider<LibraryDashboard>((ref) async {
     final map = Map<String, dynamic>.from(row as Map);
     final materialId = map['material_id']?.toString();
     if (materialId == null) continue;
-    memoryScoresByMaterial.putIfAbsent(materialId, () => <double>[]).add(_doubleFrom(map['memory_score']).clamp(0, 1).toDouble());
+    memoryScoresByMaterial
+        .putIfAbsent(materialId, () => <double>[])
+        .add(_doubleFrom(map['memory_score']).clamp(0, 1).toDouble());
     final nextReviewAt = _dateFrom(map['next_review_at']);
     if (nextReviewAt != null && !nextReviewAt.isAfter(now)) {
-      dueReviewCountByMaterial[materialId] = (dueReviewCountByMaterial[materialId] ?? 0) + 1;
+      dueReviewCountByMaterial[materialId] =
+          (dueReviewCountByMaterial[materialId] ?? 0) + 1;
     }
     final lastReviewedAt = _dateFrom(map['last_reviewed_at']);
-    if (lastReviewedAt != null && (latestMemoryByMaterial[materialId] == null || lastReviewedAt.isAfter(latestMemoryByMaterial[materialId]!))) {
+    if (lastReviewedAt != null &&
+        (latestMemoryByMaterial[materialId] == null ||
+            lastReviewedAt.isAfter(latestMemoryByMaterial[materialId]!))) {
       latestMemoryByMaterial[materialId] = lastReviewedAt;
     }
   }
 
-  final currentStreak = streakRows.isEmpty ? 0 : _intFrom(Map<String, dynamic>.from(streakRows.first as Map)['current_streak']);
+  final currentStreak = streakRows.isEmpty
+      ? 0
+      : _intFrom(
+          Map<String, dynamic>.from(streakRows.first as Map)['current_streak'],
+        );
   final totalMemoryPercent = _averageMemoryPercent(memoryRows);
   final materials = materialRows
-      .map((row) => _materialFromRow(
-            Map<String, dynamic>.from(row as Map),
-            questionCountByMaterial: questionCountByMaterial,
-            completedQuestionIdsByMaterial: completedQuestionIdsByMaterial,
-            memoryScoresByMaterial: memoryScoresByMaterial,
-            dueReviewCountByMaterial: dueReviewCountByMaterial,
-            latestAttemptByMaterial: latestAttemptByMaterial,
-            latestMemoryByMaterial: latestMemoryByMaterial,
-            currentStreak: currentStreak,
-            now: now,
-          ))
+      .map(
+        (row) => _materialFromRow(
+          Map<String, dynamic>.from(row as Map),
+          questionCountByMaterial: questionCountByMaterial,
+          completedQuestionIdsByMaterial: completedQuestionIdsByMaterial,
+          memoryScoresByMaterial: memoryScoresByMaterial,
+          dueReviewCountByMaterial: dueReviewCountByMaterial,
+          latestAttemptByMaterial: latestAttemptByMaterial,
+          latestMemoryByMaterial: latestMemoryByMaterial,
+          currentStreak: currentStreak,
+          now: now,
+        ),
+      )
       .toList(growable: false);
 
   return LibraryDashboard(
-    todayReviewCount: dueReviewCountByMaterial.values.fold<int>(0, (sum, count) => sum + count),
+    todayReviewCount: dueReviewCountByMaterial.values.fold<int>(
+      0,
+      (sum, count) => sum + count,
+    ),
     totalMemoryPercent: totalMemoryPercent,
     materials: materials,
     recentRecords: _recentRecords(materials),
@@ -154,9 +184,16 @@ StudyMaterial _materialFromRow(
   final status = row['status'] as String? ?? 'uploaded';
   final totalQuestions = questionCountByMaterial[id] ?? 0;
   final completedQuestions = completedQuestionIdsByMaterial[id]?.length ?? 0;
-  final progressPercent = totalQuestions == 0 ? _progressForStatus(status) : ((completedQuestions / totalQuestions) * 100).round().clamp(0, 100);
-  final memoryPercent = _materialMemoryPercent(memoryScoresByMaterial[id] ?? const []);
-  final latestStudyAt = latestAttemptByMaterial[id] ?? latestMemoryByMaterial[id] ?? _dateFrom(row['created_at']);
+  final progressPercent = totalQuestions == 0
+      ? _progressForStatus(status)
+      : ((completedQuestions / totalQuestions) * 100).round().clamp(0, 100);
+  final memoryPercent = _materialMemoryPercent(
+    memoryScoresByMaterial[id] ?? const [],
+  );
+  final latestStudyAt =
+      latestAttemptByMaterial[id] ??
+      latestMemoryByMaterial[id] ??
+      _dateFrom(row['created_at']);
   final seed = _seedState(memoryPercent, progressPercent);
 
   return StudyMaterial(
@@ -171,7 +208,9 @@ StudyMaterial _materialFromRow(
     dueReviewCount: dueReviewCountByMaterial[id] ?? 0,
     seedEmoji: seed.emoji,
     seedLabel: seed.label,
-    recentStudyLabel: latestStudyAt == null ? '아직 학습 전' : _relativeTime(latestStudyAt, now),
+    recentStudyLabel: latestStudyAt == null
+        ? '아직 학습 전'
+        : _relativeTime(latestStudyAt, now),
     currentStreak: currentStreak,
     status: status,
   );
@@ -181,11 +220,14 @@ List<RecentStudyRecord> _recentRecords(List<StudyMaterial> materials) {
   return materials
       .where((material) => material.completedQuestionCount > 0)
       .take(3)
-      .map((material) => RecentStudyRecord(
-            title: material.title,
-            subtitle: '최근 학습 ${material.recentStudyLabel} · 복습 예정 ${material.dueReviewCount}개',
-            scoreLabel: '${material.memoryPercent}%',
-          ))
+      .map(
+        (material) => RecentStudyRecord(
+          title: material.title,
+          subtitle:
+              '최근 학습 ${material.recentStudyLabel} · 복습 예정 ${material.dueReviewCount}개',
+          scoreLabel: '${material.memoryPercent}%',
+        ),
+      )
       .toList(growable: false);
 }
 
@@ -209,10 +251,14 @@ int _materialMemoryPercent(List<double> scores) {
 }
 
 _SeedState _seedState(int memoryPercent, int progressPercent) {
-  if (memoryPercent >= 90 && progressPercent >= 90) return const _SeedState('🏅', '완성');
+  if (memoryPercent >= 90 && progressPercent >= 90) {
+    return const _SeedState('🏅', '완성');
+  }
   if (memoryPercent >= 75) return const _SeedState('🌸', '개화');
   if (memoryPercent >= 55) return const _SeedState('🌳', '성장중');
-  if (progressPercent > 0 || memoryPercent >= 25) return const _SeedState('🌿', '새싹');
+  if (progressPercent > 0 || memoryPercent >= 25) {
+    return const _SeedState('🌿', '새싹');
+  }
   return const _SeedState('🌱', '씨앗');
 }
 

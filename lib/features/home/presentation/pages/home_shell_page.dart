@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../shared/design_system/mameroom_design_system.dart';
+
 import 'home_page.dart';
 import 'my_info_page.dart';
 import 'rank_page.dart';
@@ -18,28 +20,48 @@ class HomeShellPage extends StatelessWidget {
 
   static const homeRoutePath = '/home';
   static const studyRoutePath = '/study';
-  static const rankRoutePath = '/rank';
+  static const rankRoutePath = '/friends';
   static const myInfoRoutePath = '/my-info';
 
   static const destinations = [
-    _HomeDestination(label: '홈', icon: Icons.home_outlined, selectedIcon: Icons.home_rounded, routePath: homeRoutePath),
-    _HomeDestination(label: '공부', icon: Icons.menu_book_outlined, selectedIcon: Icons.menu_book_rounded, routePath: studyRoutePath),
-    _HomeDestination(label: '랭크', icon: Icons.emoji_events_outlined, selectedIcon: Icons.emoji_events_rounded, routePath: rankRoutePath),
-    _HomeDestination(label: '내 정보', icon: Icons.person_outline_rounded, selectedIcon: Icons.person_rounded, routePath: myInfoRoutePath),
+    _HomeDestination(
+      label: '\u{D648}',
+      icon: Icons.home_outlined,
+      selectedIcon: Icons.home_rounded,
+      routePath: homeRoutePath,
+    ),
+    _HomeDestination(
+      label: '\u{ACF5}\u{BD80}',
+      icon: Icons.menu_book_outlined,
+      selectedIcon: Icons.menu_book_rounded,
+      routePath: studyRoutePath,
+    ),
+    _HomeDestination(
+      label: '\u{CE5C}\u{AD6C}',
+      icon: Icons.group_outlined,
+      selectedIcon: Icons.group_rounded,
+      routePath: rankRoutePath,
+    ),
+    _HomeDestination(
+      label: '\u{B0B4} \u{C815}\u{BCF4}',
+      icon: Icons.person_outline_rounded,
+      selectedIcon: Icons.person_rounded,
+      routePath: myInfoRoutePath,
+    ),
   ];
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(bottom: false, child: child),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: selectedIndex,
-        onDestinationSelected: (index) => context.go(destinations[index].routePath),
-        destinations: [
+      bottomNavigationBar: MameroomBottomNavigation(
+        currentIndex: selectedIndex,
+        onTap: (index) => context.go(destinations[index].routePath),
+        items: [
           for (final destination in destinations)
-            NavigationDestination(
-              icon: Icon(destination.icon),
-              selectedIcon: Icon(destination.selectedIcon),
+            MameroomBottomNavigationItem(
+              icon: destination.icon,
+              selectedIcon: destination.selectedIcon,
               label: destination.label,
             ),
         ],

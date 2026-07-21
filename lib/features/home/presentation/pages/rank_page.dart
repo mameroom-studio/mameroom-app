@@ -1,75 +1,101 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
-import '../../../../shared/design_system/theme/mameroom_theme_extension.dart';
+import '../../../../shared/design_system/mameroom_design_system.dart';
 import '../../../../shared/widgets/mameroom_shell.dart';
+import '../../../friends/presentation/controllers/friends_controller.dart';
+import '../../../friends/presentation/pages/friend_search_page.dart';
+import '../../../friends/presentation/widgets/friends_list_panel.dart';
 
-class RankPage extends StatelessWidget {
-  const RankPage({super.key});
+class RankPage extends ConsumerWidget {
+  const RankPage({super.key, this.showEmptyFriends = false});
+
+  final bool showEmptyFriends;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final incomingCount = ref.watch(
+      friendsControllerProvider.select((state) => state.incoming.length),
+    );
     return MameroomShell(
       showSparkles: false,
-      child: ListView(
-        children: const [
-          _RankHeader(),
-          SizedBox(height: 18),
-          _RankPlaceholderCard(title: '친구 랭킹', subtitle: '친구 기능 연동 후 표시됩니다.', icon: Icons.group_outlined),
-          SizedBox(height: 12),
-          _RankPlaceholderCard(title: '학교 랭킹', subtitle: '소속 학교 설정 후 표시됩니다.', icon: Icons.school_outlined),
-          SizedBox(height: 12),
-          _RankPlaceholderCard(title: '전체 랭킹', subtitle: '정식 랭킹 정책 확정 후 표시됩니다.', icon: Icons.public_outlined),
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _FriendsHeader(incomingCount: showEmptyFriends ? 0 : incomingCount),
+          const SizedBox(height: MameroomSpacing.sm),
+          Expanded(child: FriendsListPanel(forceEmpty: showEmptyFriends)),
         ],
       ),
     );
   }
 }
 
-class _RankHeader extends StatelessWidget {
-  const _RankHeader();
+class _FriendsHeader extends StatelessWidget {
+  const _FriendsHeader({this.incomingCount});
 
-  @override
-  Widget build(BuildContext context) {
-    return Text('Rank', style: Theme.of(context).textTheme.headlineMedium);
-  }
-}
-
-class _RankPlaceholderCard extends StatelessWidget {
-  const _RankPlaceholderCard({
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-  });
-
-  final String title;
-  final String subtitle;
-  final IconData icon;
+  final int? incomingCount;
 
   @override
   Widget build(BuildContext context) {
     final colors = context.mameroom;
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: colors.paper,
-        border: Border.all(color: colors.line),
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, color: colors.primary, size: 34),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: Theme.of(context).textTheme.titleLarge),
-                const SizedBox(height: 4),
-                Text(subtitle, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: colors.muted)),
-              ],
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            '친구',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              color: colors.ink,
+              fontWeight: FontWeight.w900,
             ),
           ),
-        ],
+        ),
+        Badge(
+          isLabelVisible: (incomingCount ?? 0) > 0,
+          label: Text('${incomingCount ?? 0}'),
+          child: _HeaderAction(
+            icon: Icons.person_add_alt_1_rounded,
+            tooltip: '친구 추가',
+            onPressed: () => context.push(FriendSearchPage.routePath),
+          ),
+        ),
+        const SizedBox(width: MameroomSpacing.xs),
+        _HeaderAction(
+          icon: Icons.search_rounded,
+          tooltip: '사용자 검색',
+          onPressed: () => context.push(FriendSearchPage.routePath),
+        ),
+      ],
+    );
+  }
+}
+
+class _HeaderAction extends StatelessWidget {
+  const _HeaderAction({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.mameroom;
+    return IconButton(
+      onPressed: onPressed,
+      tooltip: tooltip,
+      constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+      icon: Icon(icon, color: colors.ink),
+      style: IconButton.styleFrom(
+        backgroundColor: colors.paper,
+        side: BorderSide(color: colors.line),
       ),
     );
   }

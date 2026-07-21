@@ -20,7 +20,7 @@ class CoreConceptExtractionResult {
   factory CoreConceptExtractionResult.fromJson(Map<String, dynamic> json) {
     return CoreConceptExtractionResult(
       materialId: json['materialId'] as String? ?? '',
-      status: json['status'] as String? ?? 'concepts_completed',
+      status: json['status'] as String? ?? 'generating',
       conceptCount: _intFrom(json['conceptCount']),
       usedCache: json['usedCache'] as bool? ?? false,
       message: json['message'] as String? ?? 'Core concepts extracted.',
@@ -59,7 +59,9 @@ class CoreConceptExtractionDataSource {
       return CoreConceptExtractionResult.fromJson(data);
     }
     if (data is Map) {
-      return CoreConceptExtractionResult.fromJson(Map<String, dynamic>.from(data));
+      return CoreConceptExtractionResult.fromJson(
+        Map<String, dynamic>.from(data),
+      );
     }
 
     throw StateError('extract-core-concepts returned an invalid response.');
@@ -115,7 +117,9 @@ class FirstQuizGenerationDataSource {
       return FirstQuizGenerationResult.fromJson(data);
     }
     if (data is Map) {
-      return FirstQuizGenerationResult.fromJson(Map<String, dynamic>.from(data));
+      return FirstQuizGenerationResult.fromJson(
+        Map<String, dynamic>.from(data),
+      );
     }
 
     throw StateError('generate-first-quiz returned an invalid response.');
@@ -191,7 +195,6 @@ void _logEdgeStop(
     'isFlutterWeb': kIsWeb,
     'exceptionMessage': exception?.toString(),
     'stackTrace': stackTrace?.toString(),
-
   });
 
   debugPrint('[upload-flow] $payload');
@@ -201,7 +204,8 @@ String _functionErrorMessage(String functionName, FunctionException error) {
   final details = error.details;
   if (details is Map) {
     final code = details['code']?.toString();
-    final message = details['error']?.toString() ?? details['message']?.toString();
+    final message =
+        details['error']?.toString() ?? details['message']?.toString();
     final suffix = code == null || code.isEmpty ? '' : '$code: ';
     if (message != null && message.isNotEmpty) {
       return '$functionName failed (${error.status}): $suffix$message';

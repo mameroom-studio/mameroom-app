@@ -13,20 +13,15 @@ class AuthRemoteDataSource {
     required String email,
     required String password,
   }) {
-    return _client.auth.signInWithPassword(
-      email: email,
-      password: password,
-    );
+    return _client.auth.signInWithPassword(email: email, password: password);
   }
 
   Future<AuthResponse> signUpWithEmail({
     required String email,
     required String password,
+    Map<String, dynamic>? data,
   }) {
-    return _client.auth.signUp(
-      email: email,
-      password: password,
-    );
+    return _client.auth.signUp(email: email, password: password, data: data);
   }
 
   Future<void> signOut() {

@@ -13,6 +13,7 @@ abstract interface class AuthRepository {
   Future<AppUser?> signUpWithEmail({
     required String email,
     required String password,
+    Map<String, dynamic>? data,
   });
 
   Future<void> signOut();

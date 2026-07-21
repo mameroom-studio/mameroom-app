@@ -1,17 +1,18 @@
-﻿import '../../../quiz/domain/entities/question.dart';
+import '../../../quiz/domain/entities/question.dart';
 import '../../domain/entities/review_schedule.dart';
 import '../../domain/repositories/review_repository.dart';
 import '../datasources/review_remote_data_source.dart';
 
 class ReviewRepositoryImpl implements ReviewRepository {
   const ReviewRepositoryImpl({required ReviewRemoteDataSource remoteDataSource})
-      : _remoteDataSource = remoteDataSource;
+    : _remoteDataSource = remoteDataSource;
 
   final ReviewRemoteDataSource _remoteDataSource;
 
   @override
-  Future<List<ReviewSchedule>> loadDueReviews() {
-    return _remoteDataSource.loadDueReviews();
+  Future<List<ReviewSchedule>> loadDueReviews() async {
+    final models = await _remoteDataSource.loadDueReviews();
+    return models.map((model) => model.toEntity()).toList(growable: false);
   }
 
   @override
@@ -28,6 +29,7 @@ class ReviewRepositoryImpl implements ReviewRepository {
       responseTimeMs: responseTimeMs,
     );
   }
+
   @override
   Future<void> passLearningItem({
     required ReviewSchedule item,

@@ -1,7 +1,10 @@
 import '../entities/question.dart';
 
 abstract interface class QuizRepository {
-  Future<QuizInitialLoad> loadInitialQuestions({required String materialId});
+  Future<QuizInitialLoad> loadInitialQuestions({
+    required String materialId,
+    bool unlearnedOnly = false,
+  });
 
   Future<MemoryUpdate> saveAttempt({
     required String materialId,

@@ -22,11 +22,11 @@ class UploadJobModel extends UploadJob {
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'source_type': sourceType.name,
-        'display_name': displayName,
-        'size_bytes': sizeBytes,
-        'path': path,
-        'text_content': textContent,
-      };
+    'id': id,
+    'source_type': sourceType.name,
+    'display_name': displayName,
+    'size_bytes': sizeBytes,
+    'path': path,
+    'text_content': textContent,
+  };
 }

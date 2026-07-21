@@ -4,20 +4,23 @@ import 'package:go_router/go_router.dart';
 
 import '../../../../shared/design_system/theme/mameroom_theme_extension.dart';
 import '../../../../shared/widgets/mameroom_shell.dart';
-import '../../../../shared/widgets/pixel_placeholders.dart';
 import '../../../coins/domain/policies/economy_policy.dart';
 import '../../../library/presentation/pages/library_page.dart';
 import '../../../quiz/domain/entities/question.dart';
 import '../../../quiz/domain/entities/quiz_result_snapshot.dart';
 import '../../../quiz/presentation/pages/quiz_result_page.dart';
 import '../../../quiz/presentation/providers/quiz_providers.dart';
-import '../widgets/study_components.dart';
-import '../widgets/study_feedback_screens.dart';
+import '../widgets/study_flow_components.dart';
 
 class StudyScreen extends ConsumerStatefulWidget {
-  const StudyScreen({required this.materialId, super.key});
+  const StudyScreen({
+    required this.materialId,
+    this.unlearnedOnly = false,
+    super.key,
+  });
 
   final String? materialId;
+  final bool unlearnedOnly;
 
   @override
   ConsumerState<StudyScreen> createState() => _StudyScreenState();
@@ -25,14 +28,22 @@ class StudyScreen extends ConsumerStatefulWidget {
 
 class _StudyScreenState extends ConsumerState<StudyScreen> {
   final _textController = TextEditingController();
-  String? _revealedAnswerQuestionId;
+  bool _bookmarked = false;
+  bool _showPassFeedback = false;
+  bool _showSeedCelebration = false;
+  bool _passNoticeShown = false;
+  QuizSessionState? _terminalPassSession;
 
   @override
   void initState() {
     super.initState();
     final materialId = widget.materialId;
     if (materialId != null && materialId.isNotEmpty) {
-      Future.microtask(() => ref.read(quizControllerProvider.notifier).load(materialId: materialId));
+      Future.microtask(
+        () => ref
+            .read(quizControllerProvider.notifier)
+            .load(materialId: materialId, unlearnedOnly: widget.unlearnedOnly),
+      );
     }
   }
 
@@ -45,699 +56,364 @@ class _StudyScreenState extends ConsumerState<StudyScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(quizControllerProvider);
-    return MameroomShell(
-      showSparkles: false,
-      padding: EdgeInsets.zero,
-      child: widget.materialId == null || widget.materialId!.isEmpty
-          ? _MissingMaterialId(onBack: () => context.go(LibraryPage.routePath))
-          : state.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (error, _) => _StudyError(message: error.toString()),
-              data: _buildSession,
-            ),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _confirmExit();
+      },
+      child: MameroomShell(
+        showSparkles: false,
+        padding: EdgeInsets.zero,
+        child: widget.materialId == null || widget.materialId!.isEmpty
+            ? _MissingMaterialId(
+                onBack: () => context.go(LibraryPage.routePath),
+              )
+            : state.when(
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (error, _) => _StudyError(message: error.toString()),
+                data: _buildSession,
+              ),
+      ),
     );
   }
 
   Widget _buildSession(QuizSessionState session) {
     final question = session.currentQuestion;
     if (question == null) {
-      return const Center(child: Text('생성된 문제가 없어요.'));
+      return _MissingMaterialId(
+        onBack: () => context.go(LibraryPage.routePath),
+      );
     }
 
-    if ((question.type == QuizQuestionType.shortAnswer || question.type == QuizQuestionType.fillBlank) && _textController.text != session.selectedAnswer) {
+    if (_usesTextInput(question) &&
+        _textController.text != session.selectedAnswer) {
       _textController.text = session.selectedAnswer;
-      _textController.selection = TextSelection.fromPosition(TextPosition(offset: _textController.text.length));
+      _textController.selection = TextSelection.fromPosition(
+        TextPosition(offset: _textController.text.length),
+      );
     }
 
+    final total = session.initialQuestionCount == 0
+        ? session.questions.length
+        : session.initialQuestionCount;
+    final answeredInitial = session.answers
+        .where((answer) => !answer.isRetry)
+        .length;
+    final current = (answeredInitial + 1).clamp(1, total == 0 ? 1 : total);
+
+    return Column(
+      children: [
+        QuizProgressHeader(
+          current: current,
+          total: total == 0 ? 1 : total,
+          coinBalance: session.coinReward.balance,
+          bookmarked: _bookmarked,
+          onExit: _confirmExit,
+        ),
+        Expanded(child: _buildBody(session, question)),
+      ],
+    );
+  }
+
+  Widget _buildBody(QuizSessionState session, Question question) {
     final answer = session.currentAnswer;
-    final memoryValue = _memoryValue(session);
-    final isAnswerRevealed = _revealedAnswerQuestionId == question.id;
+
+    if (_showSeedCelebration) {
+      return MemoryGrowthPanel(
+        beforeLevel: 2,
+        afterLevel: 3,
+        progress: _memoryValue(session),
+        onConfirm: () {
+          setState(() => _showSeedCelebration = false);
+          _advance(session);
+        },
+      );
+    }
+
+    if (_showPassFeedback) {
+      return FeedbackResultCard(
+        kind: FeedbackKind.pass,
+        answer: question.answer,
+        message: '이 문제는 PASS했어요. 나중에 다시 복습할 수 있습니다.',
+        rewardText: '',
+        isLast: _terminalPassSession != null,
+        onNext: () {
+          final terminal = _terminalPassSession;
+          setState(() {
+            _showPassFeedback = false;
+            _terminalPassSession = null;
+          });
+          if (terminal != null) _advance(terminal);
+        },
+      );
+    }
+
+    if (session.isAnswerChecked && answer != null) {
+      return FeedbackResultCard(
+        kind: answer.isCorrect ? FeedbackKind.correct : FeedbackKind.incorrect,
+        answer: answer.question.answer,
+        selectedAnswer: answer.selectedAnswer,
+        message: answer.isCorrect
+            ? '잘했어요. 핵심 개념을 정확히 기억하고 있어요.'
+            : '괜찮아요. 정답과 해설을 확인하고 다음 문제에서 다시 연결해볼게요.',
+        explanation: _explanation(answer.question),
+        source: _source(answer.question),
+        rewardText: answer.isCorrect
+            ? '+${EconomyPolicy.correctAnswerCoins} M-Coin'
+            : '+2 M-Coin',
+        isLast: session.isSessionTerminal,
+        onNext: () => _advance(session),
+      );
+    }
 
     return Column(
       children: [
         Expanded(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 240),
-              child: session.isAnswerChecked && answer != null
-                  ? answer.isCorrect
-                      ? CorrectAnswerScreen(
-                          key: const ValueKey('correct'),
-                          memoryBefore: _lastMemoryBefore(session),
-                          memoryAfter: memoryValue,
-                          coinAmount: EconomyPolicy.correctAnswerCoins,
-                          onNext: () => _advance(session),
-                        )
-                      : IncorrectAnswerScreen(
-                          key: const ValueKey('incorrect'),
-                          answer: answer,
-                          isHardStop: session.hasHardStop,
-                          hintText: _hintForIncorrect(answer.question),
-                          onNext: () => _advance(session),
-                        )
-                  : _QuestionStudyView(
-                      key: ValueKey(question.id),
-                      session: session,
-                      question: question,
-                      memoryValue: memoryValue,
-                      textController: _textController,
-                      onChanged: ref.read(quizControllerProvider.notifier).selectAnswer,
-                      onUseHint: ref.read(quizControllerProvider.notifier).useHint,
-                      onCheckAnswer: () => _checkAnswer(session),
-                      onRevealAnswer: () => setState(() => _revealedAnswerQuestionId = question.id),
-                      onUnknown: _markCurrentQuestionUnknown,
-                      isAnswerRevealed: isAnswerRevealed,
-                    ),
-            ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxHeight < 620;
+              return SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(18, 8, 18, 14),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: constraints.maxHeight - 22,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      QuestionCard(
+                        questionText: question.questionText,
+                        categoryLabel: _categoryLabel(question),
+                        difficultyLabel: _difficultyLabel(question.difficulty),
+                        questionTypeLabel: _questionTypeLabel(question.type),
+                        sourceLabel: _source(question),
+                        child: question.evidence.trim().isEmpty
+                            ? const SizedBox.shrink()
+                            : PixelQuizIllustration(compact: compact),
+                      ),
+                      const SizedBox(height: 14),
+                      _AnswerArea(
+                        question: question,
+                        selectedAnswer: session.selectedAnswer,
+                        textController: _textController,
+                        enabled: !session.isSaving,
+                        onChanged: ref
+                            .read(quizControllerProvider.notifier)
+                            .selectAnswer,
+                        onSubmit: () {
+                          if (session.selectedAnswer.trim().isEmpty) {
+                            _showEmptyAnswerMessage();
+                            return;
+                          }
+                          ref
+                              .read(quizControllerProvider.notifier)
+                              .checkAnswer();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
           ),
         ),
-        StudyBottomActionBar(
-          memoryValue: memoryValue,
-          onPass: session.isAnswerChecked || session.isSaving ? () {} : _openPassSheet,
-          onBookmark: _openBookmarkSheet,
+        BottomQuizActionBar(
+          canSubmit: session.selectedAnswer.trim().isNotEmpty,
+          isSaving: session.isSaving,
+          bookmarked: _bookmarked,
+          canUseHint: session.canUseHint,
+          onHint: ref.read(quizControllerProvider.notifier).useHint,
+          onPass: _passCurrentQuestion,
+          onBookmark: _saveBookmark,
+          onSubmit: () {
+            if (session.selectedAnswer.trim().isEmpty) {
+              _showEmptyAnswerMessage();
+              return;
+            }
+            ref.read(quizControllerProvider.notifier).checkAnswer();
+          },
         ),
       ],
     );
   }
 
-  Future<void> _checkAnswer(QuizSessionState previousSession) async {
-    await ref.read(quizControllerProvider.notifier).checkAnswer();
-  }
-
-  Future<void> _markCurrentQuestionUnknown() async {
-    final session = ref.read(quizControllerProvider).asData?.value;
-    if (session == null || session.isAnswerChecked || session.isSaving) {
-      return;
-    }
-    await ref.read(quizControllerProvider.notifier).passCurrentQuestion(
-          passType: LearningPassType.question,
-          reason: LearningPassReason.reviewLater,
-        );
-    if (!mounted) {
-      return;
-    }
-    _textController.clear();
-    setState(() => _revealedAnswerQuestionId = null);
-    final updated = ref.read(quizControllerProvider).asData?.value;
-    if (updated != null && updated.isSessionTerminal) {
-      await _advance(updated);
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('복습으로 넘겼어요. 코인은 지급되지 않습니다.')),
-    );
-  }
-
   Future<void> _advance(QuizSessionState session) async {
     if (session.isSessionTerminal) {
-      final rewardWarning = await ref.read(quizControllerProvider.notifier).awardCompletionRewards();
-      final resultSession = ref.read(quizControllerProvider).asData?.value ?? session;
+      final rewardWarning = await ref
+          .read(quizControllerProvider.notifier)
+          .awardCompletionRewards();
+      final resultSession =
+          ref.read(quizControllerProvider).asData?.value ?? session;
       final snapshot = QuizResultSnapshot.fromSession(
         resultSession,
         rewardWarning: rewardWarning,
       );
-      if (mounted) {
-        context.go(QuizResultPage.routePath, extra: snapshot);
-      }
+      if (mounted) context.go(QuizResultPage.routePath, extra: snapshot);
       return;
     }
     _textController.clear();
-    setState(() => _revealedAnswerQuestionId = null);
+    setState(() => _bookmarked = false);
     ref.read(quizControllerProvider.notifier).goNext();
   }
 
-  Future<void> _openPassSheet() async {
-    final decision = await showModalBottomSheet<_PassDecision>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (context) => const QuestionPassScreen(),
-    );
-    if (decision == null || !mounted) {
-      return;
-    }
-    await ref.read(quizControllerProvider.notifier).passCurrentQuestion(
-          passType: decision.type,
-          reason: decision.reason,
+  Future<void> _passCurrentQuestion() async {
+    final before = ref.read(quizControllerProvider).asData?.value;
+    if (before == null || before.isAnswerChecked || before.isSaving) return;
+    await ref
+        .read(quizControllerProvider.notifier)
+        .passCurrentQuestion(
+          passType: LearningPassType.question,
+          reason: LearningPassReason.reviewLater,
         );
-    if (mounted) {
-      _textController.clear();
-      setState(() => _revealedAnswerQuestionId = null);
-      final updated = ref.read(quizControllerProvider).asData?.value;
-      if (updated != null && updated.isSessionTerminal) {
-        await _advance(updated);
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('PASS 처리했어요.')));
+    if (!mounted) return;
+    final updated = ref.read(quizControllerProvider).asData?.value;
+    _textController.clear();
+    setState(() {
+      _bookmarked = false;
+      _showPassFeedback = true;
+      _terminalPassSession = updated != null && updated.isSessionTerminal
+          ? updated
+          : null;
+    });
+    if (!_passNoticeShown) {
+      _passNoticeShown = true;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('이 문제는 PASS했어요. 나중에 다시 복습할 수 있습니다.'),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(milliseconds: 1200),
+        ),
+      );
     }
   }
 
-  Future<void> _openBookmarkSheet() async {
-    final level = await showModalBottomSheet<_BookmarkLevel>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => const BookmarkScreen(),
-    );
-    if (level == null || !mounted) {
-      return;
+  Future<void> _saveBookmark() async {
+    setState(() => _bookmarked = !_bookmarked);
+    if (_bookmarked) {
+      ScaffoldMessenger.of(context).showSnackBar(BookmarkSavedSnack());
     }
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${level.label} 북마크로 저장했어요.')));
   }
+
+  Future<void> _confirmExit() async {
+    final shouldExit = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => ExitQuizDialog(
+        onSaveAndExit: () => Navigator.of(dialogContext).pop(true),
+      ),
+    );
+    if (shouldExit == true && mounted) {
+      context.go(LibraryPage.routePath);
+    }
+  }
+
+  void _showEmptyAnswerMessage() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('정답을 입력해주세요.'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  bool _usesTextInput(Question question) =>
+      question.type == QuizQuestionType.shortAnswer ||
+      question.type == QuizQuestionType.fillBlank;
 
   double _memoryValue(QuizSessionState session) {
     if (session.memoryUpdates.isNotEmpty) {
       return session.memoryUpdates.last.memoryScore.clamp(0, 1);
     }
-    return session.averageMemoryScore > 0 ? session.averageMemoryScore.clamp(0, 1) : 0.68;
+    return session.averageMemoryScore > 0
+        ? session.averageMemoryScore.clamp(0, 1)
+        : 0.65;
   }
 
-  double _lastMemoryBefore(QuizSessionState session) {
-    if (session.memoryUpdates.isEmpty) {
-      return (_memoryValue(session) - 0.03).clamp(0, 1);
-    }
-    return session.memoryUpdates.last.previousMemoryScore.clamp(0, 1);
+  String _questionTypeLabel(QuizQuestionType type) {
+    return switch (type) {
+      QuizQuestionType.multipleChoice => '객관식',
+      QuizQuestionType.shortAnswer => '주관식',
+      QuizQuestionType.fillBlank => '빈칸',
+    };
   }
 
-  String _hintForIncorrect(Question question) {
-    if (question.explanation.trim().isNotEmpty) {
-      return question.explanation;
+  String _categoryLabel(Question question) {
+    final text = question.sectionId?.trim();
+    if (text != null && text.isNotEmpty) {
+      return text.length > 8 ? text.substring(0, 8) : text;
     }
+    return '학습';
+  }
+
+  String _difficultyLabel(int difficulty) {
+    if (difficulty <= 1) {
+      return '쉬움';
+    }
+    if (difficulty >= 4) {
+      return '어려움';
+    }
+    return '보통';
+  }
+
+  String _explanation(Question question) {
+    if (question.explanation.trim().isNotEmpty) return question.explanation;
+    if (question.evidence.trim().isNotEmpty) return question.evidence;
+    return '해설이 준비되지 않았습니다.';
+  }
+
+  String? _source(Question question) {
+    final source = <String>[];
     if (question.evidence.trim().isNotEmpty) {
-      return question.evidence;
+      source.add(question.evidence.trim());
     }
-    return '핵심 개념을 다시 떠올린 뒤 정답과 연결해보세요.';
+    if (question.sectionId?.trim().isNotEmpty ?? false) {
+      source.add(question.sectionId!.trim());
+    }
+    return source.isEmpty ? null : source.join(' · ');
   }
 }
 
-class _QuestionStudyView extends StatelessWidget {
-  const _QuestionStudyView({
-    required this.session,
+class _AnswerArea extends StatelessWidget {
+  const _AnswerArea({
     required this.question,
-    required this.memoryValue,
+    required this.selectedAnswer,
     required this.textController,
+    required this.enabled,
     required this.onChanged,
-    required this.onUseHint,
-    required this.onCheckAnswer,
-    required this.onRevealAnswer,
-    required this.onUnknown,
-    required this.isAnswerRevealed,
-    super.key,
+    required this.onSubmit,
   });
-
-  final QuizSessionState session;
-  final Question question;
-  final double memoryValue;
-  final TextEditingController textController;
-  final ValueChanged<String> onChanged;
-  final VoidCallback onUseHint;
-  final VoidCallback onCheckAnswer;
-  final VoidCallback onRevealAnswer;
-  final VoidCallback onUnknown;
-  final bool isAnswerRevealed;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.mameroom;
-    final progressTotal = session.initialQuestionCount == 0 ? session.questions.length : session.initialQuestionCount;
-    final progressCurrent = (session.answers.where((answer) => !answer.isRetry).length + 1).clamp(1, progressTotal);
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return SingleChildScrollView(
-          padding: const EdgeInsets.only(bottom: 12),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: constraints.maxHeight),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-          children: [
-            IconButton(
-              tooltip: '뒤로가기',
-              onPressed: () => context.go(LibraryPage.routePath),
-              icon: Icon(Icons.arrow_back_ios_new_rounded, color: colors.primary),
-            ),
-            Expanded(
-              child: Column(
-                children: [
-                  Text(session.materialTitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.labelMedium?.copyWith(color: colors.ink, fontWeight: FontWeight.w800)),
-                  Text('문제 $progressCurrent / $progressTotal', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: colors.muted)),
-                ],
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(color: colors.paper, border: Border.all(color: colors.line), borderRadius: BorderRadius.circular(16)),
-              child: Row(
-                children: [
-                  Icon(Icons.monetization_on, color: colors.sun, size: 18),
-                  const SizedBox(width: 5),
-                  Text('1,250', style: Theme.of(context).textTheme.labelLarge),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(999),
-          child: LinearProgressIndicator(
-            value: progressTotal == 0 ? 0 : progressCurrent / progressTotal,
-            minHeight: 8,
-            color: colors.primary,
-            backgroundColor: colors.primaryMist.withValues(alpha: 0.55),
-          ),
-        ),
-        const SizedBox(height: 8),
-        MemoryGauge(value: memoryValue),
-        const SizedBox(height: 18),
-        if (session.isReinforcementQuestion) ...[
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Chip(
-              avatar: Icon(Icons.replay_rounded, color: colors.primary, size: 18),
-              label: Text('Retry ${session.currentRetryCount + 1} / 3'),
-            ),
-          ),
-          const SizedBox(height: 10),
-        ],
-        ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 180),
-          child: StudyCard(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  question.questionText,
-                  textAlign: TextAlign.center,
-                  softWrap: true,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 18),
-                if (question.type == QuizQuestionType.fillBlank)
-                  _HintPanel(session: session, answer: question.answer, onUseHint: onUseHint),
-                const SizedBox(height: 18),
-                Center(child: PixelCharacter(size: constraints.maxHeight < 560 ? 82 : 110)),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 14),
-        _AnswerInput(question: question, selectedAnswer: session.selectedAnswer, textController: textController, enabled: !session.isSaving, onChanged: onChanged),
-        const SizedBox(height: 12),
-        _AssistActions(
-          isSaving: session.isSaving,
-          isAnswerRevealed: isAnswerRevealed,
-          answer: question.answer,
-          explanation: question.explanation,
-          onRevealAnswer: onRevealAnswer,
-          onUnknown: onUnknown,
-        ),
-        const SizedBox(height: 14),
-        StudyPrimaryButton(
-          label: session.isSaving ? '저장 중...' : '정답 확인',
-          onPressed: !session.isSaving && session.selectedAnswer.trim().isNotEmpty ? onCheckAnswer : null,
-        ),
-        const SizedBox(height: 12),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _AnswerInput extends StatelessWidget {
-  const _AnswerInput({required this.question, required this.selectedAnswer, required this.textController, required this.enabled, required this.onChanged});
 
   final Question question;
   final String selectedAnswer;
   final TextEditingController textController;
   final bool enabled;
   final ValueChanged<String> onChanged;
+  final VoidCallback onSubmit;
 
   @override
   Widget build(BuildContext context) {
-    return switch (question.type) {
-      QuizQuestionType.multipleChoice => Column(
-          children: [
-            for (var index = 0; index < question.options.length; index++) ...[
-              _ChoiceButton(
-                index: index,
-                label: question.options[index],
-                selected: selectedAnswer == question.options[index],
-                enabled: enabled,
-                onTap: () => onChanged(question.options[index]),
-              ),
-              if (index != question.options.length - 1) const SizedBox(height: 10),
-            ],
-          ],
-        ),
-      QuizQuestionType.shortAnswer => SizedBox(
-          height: 56,
-          child: TextField(
-            controller: textController,
-            enabled: enabled,
-            decoration: const InputDecoration(labelText: '?뺣떟 ?낅젰'),
-            onChanged: onChanged,
-          ),
-        ),
-      QuizQuestionType.fillBlank => SizedBox(
-          height: 56,
-          child: TextField(
-            controller: textController,
-            enabled: enabled,
-            decoration: const InputDecoration(labelText: '정답 입력'),
-            onChanged: onChanged,
-          ),
-        ),
-    };
-  }
-}
-
-class _AssistActions extends StatelessWidget {
-  const _AssistActions({
-    required this.isSaving,
-    required this.isAnswerRevealed,
-    required this.answer,
-    required this.explanation,
-    required this.onRevealAnswer,
-    required this.onUnknown,
-  });
-
-  final bool isSaving;
-  final bool isAnswerRevealed;
-  final String answer;
-  final String explanation;
-  final VoidCallback onRevealAnswer;
-  final VoidCallback onUnknown;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.mameroom;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: isSaving ? null : onUnknown,
-                icon: const Icon(Icons.help_outline_rounded),
-                label: const Text('모르겠어요'),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: isSaving || isAnswerRevealed ? null : onRevealAnswer,
-                icon: const Icon(Icons.visibility_outlined),
-                label: const Text('정답 보기'),
-              ),
-            ),
-          ],
-        ),
-        if (isAnswerRevealed) ...[
-          const SizedBox(height: 10),
-          StudyCard(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('정답', style: Theme.of(context).textTheme.labelLarge?.copyWith(color: colors.primary)),
-                const SizedBox(height: 6),
-                Text(answer, style: Theme.of(context).textTheme.titleMedium),
-                if (explanation.trim().isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(explanation, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: colors.muted)),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-}
-
-class _ChoiceButton extends StatelessWidget {
-  const _ChoiceButton({required this.index, required this.label, required this.selected, required this.enabled, required this.onTap});
-
-  final int index;
-  final String label;
-  final bool selected;
-  final bool enabled;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.mameroom;
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
-      onTap: enabled ? onTap : null,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 140),
-        constraints: const BoxConstraints(minHeight: 56),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: selected ? colors.primary : colors.paper,
-          border: Border.all(color: selected ? colors.primary : colors.line),
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(top: 1),
-              child: Text('${index + 1}', style: TextStyle(color: selected ? Colors.white : colors.ink, fontWeight: FontWeight.w900)),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                label,
-                softWrap: true,
-                maxLines: 5,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: selected ? Colors.white : colors.ink,
-                  fontWeight: FontWeight.w800,
-                  height: 1.25,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _HintPanel extends StatelessWidget {
-  const _HintPanel({required this.session, required this.answer, required this.onUseHint});
-
-  final QuizSessionState session;
-  final String answer;
-  final VoidCallback onUseHint;
-
-  @override
-  Widget build(BuildContext context) {
-    final hint = switch (session.currentHintLevel) {
-      1 => _initialConsonantHint(answer),
-      2 => _firstCharacterHint(answer),
-      _ => '빈칸 문제는 힌트를 사용할 수 있어요.',
-    };
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(color: context.mameroom.primaryMist.withValues(alpha: 0.28), borderRadius: BorderRadius.circular(16)),
-      child: Row(
+    if (question.type == QuizQuestionType.multipleChoice) {
+      return Column(
         children: [
-          Expanded(child: Text('힌트: $hint')),
-          OutlinedButton.icon(
-            onPressed: session.canUseHint ? onUseHint : null,
-            icon: const Icon(Icons.lightbulb_outline),
-            label: Text(session.currentHintLevel == 0 ? '힌트 1' : '힌트 2'),
-          ),
+          for (var index = 0; index < question.options.length; index++) ...[
+            AnswerOptionCard(
+              index: index + 1,
+              label: question.options[index],
+              selected: selectedAnswer == question.options[index],
+              enabled: enabled,
+              onTap: () => onChanged(question.options[index]),
+            ),
+            if (index != question.options.length - 1) const SizedBox(height: 9),
+          ],
         ],
-      ),
-    );
-  }
-
-  String _initialConsonantHint(String value) {
-    const initials = ['ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ'];
-    return value.runes.map((rune) {
-      if (rune < 0xac00 || rune > 0xd7a3) {
-        return String.fromCharCode(rune).trim().isEmpty ? ' ' : '_';
-      }
-      return initials[((rune - 0xac00) ~/ 588).clamp(0, initials.length - 1)];
-    }).join();
-  }
-
-  String _firstCharacterHint(String value) {
-    final chars = value.runes.toList();
-    if (chars.isEmpty) {
-      return '';
+      );
     }
-    return '${String.fromCharCode(chars.first)}${List.filled(chars.length - 1, '_').join()}';
-  }
-}
-
-class QuestionPassScreen extends StatefulWidget {
-  const QuestionPassScreen({super.key});
-
-  @override
-  State<QuestionPassScreen> createState() => _QuestionPassScreenState();
-}
-
-class _QuestionPassScreenState extends State<QuestionPassScreen> {
-  LearningPassType _type = LearningPassType.question;
-  LearningPassReason _reason = LearningPassReason.alreadyKnown;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.mameroom;
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('이 문제는 PASS 할까요!', textAlign: TextAlign.center, style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 18),
-            SegmentedButton<LearningPassType>(
-              segments: const [
-                ButtonSegment(value: LearningPassType.question, label: Text('문제 PASS')),
-                ButtonSegment(value: LearningPassType.concept, label: Text('개념 PASS')),
-              ],
-              selected: {_type},
-              onSelectionChanged: (value) => setState(() => _type = value.first),
-            ),
-            const SizedBox(height: 18),
-            Text('PASS 사유를 선택해주세요.', style: Theme.of(context).textTheme.bodyLarge),
-            const SizedBox(height: 8),
-            RadioGroup<LearningPassReason>(
-              groupValue: _reason,
-              onChanged: (value) => setState(() => _reason = value ?? _reason),
-              child: Column(
-                children: LearningPassReason.values.map((reason) {
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: RadioListTile<LearningPassReason>(
-                      value: reason,
-                      title: Text(reason.label),
-                      tileColor: colors.paper,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: colors.line)),
-                    ),
-                  );
-                }).toList(growable: false),
-              ),
-            ),
-            const SizedBox(height: 10),
-            StudyPrimaryButton(
-              label: 'PASS 하기',
-              onPressed: () => Navigator.of(context).pop(_PassDecision(_type, _reason)),
-            ),
-            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('취소')),
-          ],
-        ),
-      ),
+    return ShortAnswerField(
+      controller: textController,
+      enabled: enabled,
+      onChanged: onChanged,
+      onSubmitted: (_) => onSubmit(),
     );
   }
-}
-
-class BookmarkScreen extends StatefulWidget {
-  const BookmarkScreen({super.key});
-
-  @override
-  State<BookmarkScreen> createState() => _BookmarkScreenState();
-}
-
-class _BookmarkScreenState extends State<BookmarkScreen> {
-  _BookmarkLevel _selected = _BookmarkLevel.important;
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('중요도를 선택해주세요.', textAlign: TextAlign.center, style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 18),
-            ..._BookmarkLevel.values.map((level) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: _BookmarkTile(
-                  level: level,
-                  selected: level == _selected,
-                  onTap: () => setState(() => _selected = level),
-                ),
-              );
-            }),
-            const SizedBox(height: 10),
-            StudyPrimaryButton(label: '저장하기', onPressed: () => Navigator.of(context).pop(_selected)),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _BookmarkTile extends StatelessWidget {
-  const _BookmarkTile({required this.level, required this.selected, required this.onTap});
-
-  final _BookmarkLevel level;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.mameroom;
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: colors.paper,
-          border: Border.all(color: selected ? colors.primary : colors.line, width: selected ? 2 : 1),
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Row(
-          children: [
-            Text(level.stars, style: const TextStyle(fontSize: 22)),
-            const SizedBox(width: 16),
-            Expanded(child: Text(level.label, style: Theme.of(context).textTheme.titleMedium)),
-            Text(level.description, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: colors.muted)),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _PassDecision {
-  const _PassDecision(this.type, this.reason);
-
-  final LearningPassType type;
-  final LearningPassReason reason;
-}
-
-enum _BookmarkLevel {
-  normal('일반', '☆ ☆ ☆', '복습 빈도 1배'),
-  important('중요', '★ ☆ ☆', '복습 빈도 1.5배'),
-  veryImportant('매우 중요', '★ ★ ☆', '복습 빈도 2배'),
-  highest('최우선', '★ ★ ★', '복습 빈도 3배');
-
-  const _BookmarkLevel(this.label, this.stars, this.description);
-
-  final String label;
-  final String stars;
-  final String description;
 }
 
 class _MissingMaterialId extends StatelessWidget {
@@ -747,7 +423,26 @@ class _MissingMaterialId extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(child: StudyPrimaryButton(label: '라이브러리로 돌아가기', onPressed: onBack));
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: StudyFlowCard(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const PixelSeedHero(size: 96),
+              const SizedBox(height: 14),
+              Text(
+                '학습 자료를 찾을 수 없어요',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 16),
+              FilledButton(onPressed: onBack, child: const Text('공부 탭으로 돌아가기')),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -758,18 +453,35 @@ class _StudyError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.mameroom;
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: StudyCard(
+        padding: const EdgeInsets.all(24),
+        child: StudyFlowCard(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const PixelSeed(size: 54),
-              const SizedBox(height: 16),
-              Text('학습 화면을 불러오지 못했어요', style: Theme.of(context).textTheme.titleLarge),
+              Icon(
+                Icons.error_outline_rounded,
+                color: Theme.of(context).colorScheme.error,
+                size: 46,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '학습 화면을 불러오지 못했어요',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  color: colors.ink,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
               const SizedBox(height: 8),
-              Text(message, textAlign: TextAlign.center),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: colors.muted),
+              ),
             ],
           ),
         ),
@@ -777,4 +489,3 @@ class _StudyError extends StatelessWidget {
     );
   }
 }
-

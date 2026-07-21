@@ -1,4 +1,4 @@
-﻿import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -119,8 +119,8 @@ Deno.serve(async (req) => {
       });
     }
 
-    if (material.status !== "concepts_completed") {
-      return errorJson(new AppError("INVALID_MATERIAL_STATUS", "generate-first-quiz requires status concepts_completed.", 409), material.id);
+    if (material.status !== "generating") {
+      return errorJson(new AppError("INVALID_MATERIAL_STATUS", "generate-first-quiz requires status generating.", 409), material.id);
     }
 
     const concepts = filterUsableConcepts(await loadConcepts(supabase, authData.user.id, material.id));
@@ -165,8 +165,8 @@ Deno.serve(async (req) => {
       }
     }
 
-    logStep("quiz.status.questions_generating", { materialId: material.id, conceptCount: concepts.length });
-    await updateMaterial(supabase, material.id, { status: "questions_generating" });
+    logStep("quiz.status.generating", { materialId: material.id, conceptCount: concepts.length });
+    await updateMaterial(supabase, material.id, { status: "generating" });
     logStep("quiz.openai.start", { materialId: material.id });
     const questions = await generateQuestionsWithOpenAi({
       apiKey: openAiApiKey,

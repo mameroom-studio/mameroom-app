@@ -10,7 +10,7 @@ create table if not exists public.study_materials (
   storage_path text,
   raw_text text,
   structured_text text,
-  status text not null default 'uploaded' check (status in ('uploaded', 'extracting', 'analyzing', 'concepts_completed', 'questions_generating', 'completed', 'failed')),
+  status text not null default 'uploaded' check (status in ('uploading', 'uploaded', 'parsing', 'extracting', 'analyzing', 'concepts_completed', 'generating', 'questions_generating', 'completed', 'failed')),
   analysis_error text,
   analysis_completed_at timestamptz,
   created_at timestamptz not null default now(),
@@ -29,7 +29,7 @@ alter table public.study_materials
 
 alter table public.study_materials
   add constraint study_materials_status_check
-  check (status in ('uploaded', 'extracting', 'analyzing', 'concepts_completed', 'questions_generating', 'completed', 'failed'));
+  check (status in ('uploading', 'uploaded', 'parsing', 'extracting', 'analyzing', 'concepts_completed', 'generating', 'questions_generating', 'completed', 'failed'));
 
 create index if not exists study_materials_user_file_hash_idx
   on public.study_materials (user_id, file_hash);

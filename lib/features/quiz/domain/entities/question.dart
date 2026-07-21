@@ -67,14 +67,12 @@ class Question {
 }
 
 class QuizInitialLoad {
-  const QuizInitialLoad({
-    required this.materialTitle,
-    required this.questions,
-  });
+  const QuizInitialLoad({required this.materialTitle, required this.questions});
 
   final String materialTitle;
   final List<Question> questions;
 }
+
 class QuizAnswerResult {
   const QuizAnswerResult({
     required this.question,
@@ -107,7 +105,8 @@ class QuizResultSummary {
 
   int get totalCount => answers.length;
   int get correctCount => answers.where((answer) => answer.isCorrect).length;
-  int get firstAttemptCount => answers.where((answer) => !answer.isRetry).length;
+  int get firstAttemptCount =>
+      answers.where((answer) => !answer.isRetry).length;
   int get firstAttemptCorrectCount =>
       answers.where((answer) => !answer.isRetry && answer.isCorrect).length;
   int get retryCount => answers.where((answer) => answer.isRetry).length;
@@ -117,7 +116,8 @@ class QuizResultSummary {
   double get accuracy => totalCount == 0 ? 0 : correctCount / totalCount;
   double get firstAttemptAccuracy =>
       firstAttemptCount == 0 ? 0 : firstAttemptCorrectCount / firstAttemptCount;
-  double get retrySuccessRate => retryCount == 0 ? 0 : retryCorrectCount / retryCount;
+  double get retrySuccessRate =>
+      retryCount == 0 ? 0 : retryCorrectCount / retryCount;
   double get memoryConsolidationRate {
     final uniqueQuestions = answers.map((answer) => answer.question.id).toSet();
     if (uniqueQuestions.isEmpty) {
@@ -129,14 +129,19 @@ class QuizResultSummary {
         .toSet();
     return correctQuestions.length / uniqueQuestions.length;
   }
+
   double get averageResponseTimeMs {
     if (answers.isEmpty) {
       return 0;
     }
-    final total = answers.fold<int>(0, (sum, answer) => sum + answer.responseTimeMs);
+    final total = answers.fold<int>(
+      0,
+      (sum, answer) => sum + answer.responseTimeMs,
+    );
     return total / answers.length;
   }
 }
+
 class MemoryUpdate {
   const MemoryUpdate({
     required this.conceptId,

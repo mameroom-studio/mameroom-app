@@ -3,6 +3,9 @@ import 'dart:math';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../shared/supabase/supabase_tables.dart';
+import '../../../../core/config/env.dart';
+import '../../../memory_engine/data/datasources/memory_engine_remote_data_source.dart';
+import '../../../memory_engine/domain/entities/memory_engine_result.dart';
 import '../../domain/entities/question.dart';
 import '../models/question_model.dart';
 
@@ -11,7 +14,10 @@ class QuizRemoteDataSource {
 
   final SupabaseClient _client;
 
-  Future<QuizInitialLoad> loadInitialQuestions({required String materialId}) async {
+  Future<QuizInitialLoad> loadInitialQuestions({
+    required String materialId,
+    bool unlearnedOnly = false,
+  }) async {
     final user = _client.auth.currentUser;
     if (user == null) {
       throw StateError('User session is required to load quiz questions.');
@@ -28,25 +34,41 @@ class QuizRemoteDataSource {
       throw StateError('Study material was not found.');
     }
     if (material['status'] != 'completed') {
-      throw StateError('Quiz is available only after material status is completed.');
+      throw StateError(
+        'Quiz is available only after material status is completed.',
+      );
     }
 
     final rows = await _client
         .from(SupabaseTables.questions)
-        .select('id,material_id,concept_id,section_id,type,question_text,options,answer,explanation,evidence,difficulty,order_index')
+        .select(
+          'id,material_id,concept_id,section_id,type,question_text,options,answer,explanation,evidence,difficulty,order_index',
+        )
         .eq('user_id', user.id)
         .eq('material_id', materialId)
         .eq('initial_batch', true)
-        .neq('type', 'ox')
-        .inFilter('type', const ['short_answer', 'multiple_choice', 'fill_blank'])
+        .eq('type', 'multiple_choice')
         .order('order_index', ascending: true)
         .limit(10);
 
-    final passFilter = await _loadPassFilter(userId: user.id, materialId: materialId);
+    final passFilter = await _loadPassFilter(
+      userId: user.id,
+      materialId: materialId,
+    );
+
+    final attemptedIds = unlearnedOnly
+        ? await _loadAttemptedQuestionIds(user.id)
+        : const <String>{};
 
     final questions = rows
-        .map((row) => QuestionModel.fromJson(_sanitizeQuestionRow(Map<String, dynamic>.from(row as Map))))
+        .map(
+          (row) => QuestionModel.fromJson(
+            _sanitizeQuestionRow(Map<String, dynamic>.from(row as Map)),
+          ),
+        )
         .where(passFilter.allowsQuestion)
+        .where(_isEligibleMultipleChoice)
+        .where((question) => !attemptedIds.contains(question.id))
         .toList(growable: false);
 
     return QuizInitialLoad(
@@ -55,10 +77,35 @@ class QuizRemoteDataSource {
     );
   }
 
+  Future<Set<String>> _loadAttemptedQuestionIds(String userId) async {
+    final rows = await _client
+        .from(SupabaseTables.quizAttempts)
+        .select('question_id')
+        .eq('user_id', userId);
+    return rows
+        .map((row) => (row as Map)['question_id']?.toString())
+        .whereType<String>()
+        .toSet();
+  }
+
+  bool _isEligibleMultipleChoice(Question question) {
+    if (question.type != QuizQuestionType.multipleChoice ||
+        question.options.length < 2 ||
+        question.answer.trim().isEmpty) {
+      return false;
+    }
+    final answer = question.answer.trim().toLowerCase();
+    return question.options.any(
+      (option) => option.trim().toLowerCase() == answer,
+    );
+  }
+
   Map<String, dynamic> _sanitizeQuestionRow(Map<String, dynamic> row) {
-    row['question_text'] = _safeDisplayText(row['question_text']) ?? '문제 문장을 다시 생성해야 합니다.';
+    row['question_text'] =
+        _safeDisplayText(row['question_text']) ?? '문제 문장을 다시 생성해야 합니다.';
     row['answer'] = _safeDisplayText(row['answer']) ?? '정답을 다시 생성해야 합니다.';
-    row['explanation'] = _safeDisplayText(row['explanation']) ?? '해설을 다시 생성해야 합니다.';
+    row['explanation'] =
+        _safeDisplayText(row['explanation']) ?? '해설을 다시 생성해야 합니다.';
     final evidence = row['evidence'];
     if (evidence is Map) {
       row['evidence'] = {
@@ -85,19 +132,37 @@ class QuizRemoteDataSource {
         .toString()
         .replaceAll(_uuidPattern, '')
         .replaceAll(_storagePathPattern, '')
-        .replaceAll(RegExp(r'\b(?:material|concept|question|section|source)[_-]?id\b\s*[:=]?\s*', caseSensitive: false), '')
-        .replaceAll(RegExp(r'\b(?:materialId|conceptId|questionId|sectionId|sourceHash|storagePath|fileHash)\b\s*[:=]?\s*'), '')
+        .replaceAll(
+          RegExp(
+            r'\b(?:material|concept|question|section|source)[_-]?id\b\s*[:=]?\s*',
+            caseSensitive: false,
+          ),
+          '',
+        )
+        .replaceAll(
+          RegExp(
+            r'\b(?:materialId|conceptId|questionId|sectionId|sourceHash|storagePath|fileHash)\b\s*[:=]?\s*',
+          ),
+          '',
+        )
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
-    if (sanitized.isEmpty || _containsInternalIdentifier(sanitized)) return null;
+    if (sanitized.isEmpty || _containsInternalIdentifier(sanitized)) {
+      return null;
+    }
     return sanitized;
   }
 
   bool _containsInternalIdentifier(String value) {
     return _uuidPattern.hasMatch(value) ||
         _storagePathPattern.hasMatch(value) ||
-        RegExp(r'\b(?:material|concept|question|section|source)[_-]?id\b', caseSensitive: false).hasMatch(value) ||
-        RegExp(r'\b(?:materialId|conceptId|questionId|sectionId|sourceHash|storagePath|fileHash)\b').hasMatch(value);
+        RegExp(
+          r'\b(?:material|concept|question|section|source)[_-]?id\b',
+          caseSensitive: false,
+        ).hasMatch(value) ||
+        RegExp(
+          r'\b(?:materialId|conceptId|questionId|sectionId|sourceHash|storagePath|fileHash)\b',
+        ).hasMatch(value);
   }
 
   static final _uuidPattern = RegExp(
@@ -130,6 +195,30 @@ class QuizRemoteDataSource {
       questionId: questionId,
     );
 
+    if (Env.useMemoryEngineV2(user.id)) {
+      final previous = await _legacyMemoryScore(
+        userId: user.id,
+        materialId: materialId,
+        conceptId: question.conceptId,
+      );
+      final result = await MemoryEngineRemoteDataSource(_client).submit(
+        MemoryEngineSubmission(
+          questionId: questionId,
+          selectedAnswer: selectedAnswer,
+          isCorrect: isCorrect,
+          responseTimeMs: responseTimeMs,
+          retryCount: retryCount,
+          hintLevel: hintLevel,
+        ),
+      );
+      return MemoryUpdate(
+        conceptId: question.conceptId,
+        previousMemoryScore: previous,
+        memoryScore: previous,
+        nextReviewAt: result.dueAt ?? result.reviewedAt,
+      );
+    }
+
     await _client.from(SupabaseTables.quizAttempts).insert({
       'user_id': user.id,
       'material_id': materialId,
@@ -154,6 +243,21 @@ class QuizRemoteDataSource {
       hintUsed: hintUsed,
       hintLevel: hintLevel,
     );
+  }
+
+  Future<double> _legacyMemoryScore({
+    required String userId,
+    required String materialId,
+    required String conceptId,
+  }) async {
+    final row = await _client
+        .from(SupabaseTables.memoryStates)
+        .select('memory_score')
+        .eq('user_id', userId)
+        .eq('material_id', materialId)
+        .eq('concept_id', conceptId)
+        .maybeSingle();
+    return _doubleFrom(row?['memory_score']);
   }
 
   Future<void> saveFeedback({
@@ -181,6 +285,13 @@ class QuizRemoteDataSource {
     final user = _client.auth.currentUser;
     if (user == null) {
       throw StateError('User session is required to pass learning items.');
+    }
+
+    if (Env.useMemoryEngineV2(user.id)) {
+      await MemoryEngineRemoteDataSource(
+        _client,
+      ).pass(MemoryEnginePass(questionId: question.id, reason: reason.value));
+      return;
     }
 
     var query = _client
@@ -240,15 +351,18 @@ class QuizRemoteDataSource {
     final conceptIds = <String>{};
     for (final row in rows) {
       final map = Map<String, dynamic>.from(row as Map);
-      if (map['pass_type'] == LearningPassType.question.value && map['question_id'] != null) {
+      if (map['pass_type'] == LearningPassType.question.value &&
+          map['question_id'] != null) {
         questionIds.add(map['question_id'].toString());
       }
-      if (map['pass_type'] == LearningPassType.concept.value && map['concept_id'] != null) {
+      if (map['pass_type'] == LearningPassType.concept.value &&
+          map['concept_id'] != null) {
         conceptIds.add(map['concept_id'].toString());
       }
     }
     return _PassFilter(questionIds: questionIds, conceptIds: conceptIds);
   }
+
   Future<QuestionModel> _loadQuestionForMemory({
     required String userId,
     required String materialId,
@@ -256,7 +370,9 @@ class QuizRemoteDataSource {
   }) async {
     final row = await _client
         .from(SupabaseTables.questions)
-        .select('id,material_id,concept_id,section_id,type,question_text,options,answer,explanation,evidence,difficulty,order_index')
+        .select(
+          'id,material_id,concept_id,section_id,type,question_text,options,answer,explanation,evidence,difficulty,order_index',
+        )
         .eq('id', questionId)
         .eq('material_id', materialId)
         .eq('user_id', userId)
@@ -379,6 +495,7 @@ class QuizRemoteDataSource {
         .eq('id', existing['id'])
         .eq('user_id', userId);
   }
+
   double _responseTimeScore(int responseTimeMs) {
     final seconds = max(0, responseTimeMs) / 1000.0;
     return _clamp01(1 - (seconds / 30.0));
@@ -421,6 +538,7 @@ class QuizRemoteDataSource {
 
   double _clamp01(double value) => value.clamp(0, 1).toDouble();
 }
+
 class _PassFilter {
   const _PassFilter({required this.questionIds, required this.conceptIds});
 
@@ -428,6 +546,7 @@ class _PassFilter {
   final Set<String> conceptIds;
 
   bool allowsQuestion(Question question) {
-    return !questionIds.contains(question.id) && !conceptIds.contains(question.conceptId);
+    return !questionIds.contains(question.id) &&
+        !conceptIds.contains(question.conceptId);
   }
 }

@@ -8,6 +8,8 @@ import '../../../streak/presentation/providers/streak_providers.dart';
 import '../../data/datasources/quiz_remote_data_source.dart';
 import '../../data/repositories/quiz_repository_impl.dart';
 import '../../domain/entities/question.dart';
+import '../../domain/entities/quiz_session_checkpoint.dart';
+import '../../../home/presentation/providers/next_study_providers.dart';
 import '../../domain/repositories/quiz_repository.dart';
 import '../../domain/usecases/quiz_usecase.dart';
 
@@ -31,9 +33,8 @@ final quizUseCaseProvider = Provider<QuizUseCase>((ref) {
 
 final quizControllerProvider =
     StateNotifierProvider<QuizController, AsyncValue<QuizSessionState>>((ref) {
-  return QuizController(ref);
-});
-
+      return QuizController(ref);
+    });
 
 class ReinforcementQueueItem {
   const ReinforcementQueueItem({
@@ -122,9 +123,11 @@ class QuizSessionState {
 
   Set<String> get passedInitialQuestionIds => questions
       .take(initialQuestionCount)
-      .where((question) =>
-          passedQuestionIds.contains(question.id) ||
-          passedConceptIds.contains(question.conceptId))
+      .where(
+        (question) =>
+            passedQuestionIds.contains(question.id) ||
+            passedConceptIds.contains(question.conceptId),
+      )
       .map((question) => question.id)
       .toSet();
 
@@ -175,7 +178,8 @@ class QuizSessionState {
     return initialQuestionIds.difference(resolved).isEmpty;
   }
 
-  bool get isSessionTerminal => hasHardStop || allQuestionsResolved || remainingQuestionCount == 0;
+  bool get isSessionTerminal =>
+      hasHardStop || allQuestionsResolved || remainingQuestionCount == 0;
 
   bool get isLastQuestion => isAnswerChecked && isSessionTerminal;
 
@@ -208,7 +212,10 @@ class QuizSessionState {
     if (memoryUpdates.isEmpty) {
       return 0;
     }
-    final total = memoryUpdates.fold<double>(0, (sum, item) => sum + item.delta);
+    final total = memoryUpdates.fold<double>(
+      0,
+      (sum, item) => sum + item.delta,
+    );
     return total / memoryUpdates.length;
   }
 
@@ -257,7 +264,9 @@ class QuizSessionState {
       hintLevelsByQuestion: hintLevelsByQuestion ?? this.hintLevelsByQuestion,
       passedQuestionIds: passedQuestionIds ?? this.passedQuestionIds,
       passedConceptIds: passedConceptIds ?? this.passedConceptIds,
-      failedQuestionId: clearFailedQuestionId ? null : failedQuestionId ?? this.failedQuestionId,
+      failedQuestionId: clearFailedQuestionId
+          ? null
+          : failedQuestionId ?? this.failedQuestionId,
       isSaving: isSaving ?? this.isSaving,
       memoryUpdates: memoryUpdates ?? this.memoryUpdates,
       coinReward: coinReward ?? this.coinReward,
@@ -272,13 +281,34 @@ class QuizController extends StateNotifier<AsyncValue<QuizSessionState>> {
 
   final Ref _ref;
 
-  Future<void> load({required String materialId}) async {
+  Future<void> load({
+    required String materialId,
+    bool unlearnedOnly = false,
+  }) async {
     state = const AsyncLoading();
     try {
       final loadResult = await _ref
           .read(quizUseCaseProvider)
-          .loadInitialQuestions(materialId: materialId);
+          .loadInitialQuestions(
+            materialId: materialId,
+            unlearnedOnly: unlearnedOnly,
+          );
       final questions = loadResult.questions;
+      final checkpoint = unlearnedOnly
+          ? null
+          : await _ref
+                .read(quizSessionCheckpointRepositoryProvider)
+                .loadLatest();
+      final restored = _restoreCheckpoint(
+        checkpoint: checkpoint,
+        materialId: materialId,
+        materialTitle: loadResult.materialTitle,
+        questions: questions,
+      );
+      if (restored != null) {
+        state = AsyncData(restored);
+        return;
+      }
       state = AsyncData(
         QuizSessionState(
           materialId: materialId,
@@ -292,6 +322,7 @@ class QuizController extends StateNotifier<AsyncValue<QuizSessionState>> {
           initialQuestionCount: questions.length,
         ),
       );
+      await _persistCheckpoint();
     } catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);
     }
@@ -303,18 +334,23 @@ class QuizController extends StateNotifier<AsyncValue<QuizSessionState>> {
       return;
     }
     state = AsyncData(value.copyWith(selectedAnswer: answer));
+    _persistCheckpoint();
   }
 
   Future<void> checkAnswer() async {
     final value = state.asData?.value;
     final question = value?.currentQuestion;
-    if (value == null || question == null || value.selectedAnswer.trim().isEmpty) {
+    if (value == null ||
+        question == null ||
+        value.selectedAnswer.trim().isEmpty) {
       return;
     }
 
     final selected = value.selectedAnswer.trim();
     final isCorrect = _normalize(selected) == _normalize(question.answer);
-    final responseTimeMs = DateTime.now().difference(value.questionStartedAt).inMilliseconds;
+    final responseTimeMs = DateTime.now()
+        .difference(value.questionStartedAt)
+        .inMilliseconds;
     final retryCount = value.currentRetryCount;
     final attemptNumber = retryCount + 1;
     final hintLevel = value.currentHintLevel;
@@ -331,7 +367,9 @@ class QuizController extends StateNotifier<AsyncValue<QuizSessionState>> {
 
     state = AsyncData(value.copyWith(isSaving: true));
     try {
-      final memoryUpdate = await _ref.read(quizUseCaseProvider).saveAttempt(
+      final memoryUpdate = await _ref
+          .read(quizUseCaseProvider)
+          .saveAttempt(
             materialId: value.materialId,
             questionId: question.id,
             selectedAnswer: selected,
@@ -341,10 +379,7 @@ class QuizController extends StateNotifier<AsyncValue<QuizSessionState>> {
             hintUsed: hintLevel > 0,
             hintLevel: hintLevel,
           );
-      final queue = _queueAfterAnswer(
-        session: value,
-        answer: answer,
-      );
+      final queue = _queueAfterAnswer(session: value, answer: answer);
       state = AsyncData(
         value.copyWith(
           answers: [...value.answers, answer],
@@ -355,6 +390,7 @@ class QuizController extends StateNotifier<AsyncValue<QuizSessionState>> {
           isSaving: false,
         ),
       );
+      await _persistCheckpoint();
     } catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);
     }
@@ -368,7 +404,9 @@ class QuizController extends StateNotifier<AsyncValue<QuizSessionState>> {
 
     state = AsyncData(value.copyWith(isRewarding: true));
     try {
-      var reward = await _ref.read(coinUseCaseProvider).awardQuizCompletion(
+      var reward = await _ref
+          .read(coinUseCaseProvider)
+          .awardQuizCompletion(
             materialId: value.materialId,
             answers: value.answers
                 .map(
@@ -433,6 +471,7 @@ class QuizController extends StateNotifier<AsyncValue<QuizSessionState>> {
         questionStartedAt: DateTime.now(),
       ),
     );
+    _persistCheckpoint();
   }
 
   void useHint() {
@@ -459,13 +498,18 @@ class QuizController extends StateNotifier<AsyncValue<QuizSessionState>> {
   }) async {
     final value = state.asData?.value;
     final question = value?.currentQuestion;
-    if (value == null || question == null || value.isAnswerChecked || value.isSaving) {
+    if (value == null ||
+        question == null ||
+        value.isAnswerChecked ||
+        value.isSaving) {
       return;
     }
 
     state = AsyncData(value.copyWith(isSaving: true));
     try {
-      await _ref.read(quizUseCaseProvider).passLearningItem(
+      await _ref
+          .read(quizUseCaseProvider)
+          .passLearningItem(
             materialId: value.materialId,
             question: question,
             passType: passType,
@@ -514,16 +558,16 @@ class QuizController extends StateNotifier<AsyncValue<QuizSessionState>> {
       state = AsyncError(error, stackTrace);
     }
   }
+
   Future<void> saveFeedback(String feedbackType) async {
     final value = state.asData?.value;
     final question = value?.currentQuestion;
     if (question == null) {
       return;
     }
-    await _ref.read(quizUseCaseProvider).saveFeedback(
-          questionId: question.id,
-          feedbackType: feedbackType,
-        );
+    await _ref
+        .read(quizUseCaseProvider)
+        .saveFeedback(questionId: question.id, feedbackType: feedbackType);
   }
 
   _QueueUpdate _queueAfterAnswer({
@@ -539,10 +583,7 @@ class QuizController extends StateNotifier<AsyncValue<QuizSessionState>> {
     }
 
     if (answer.attemptNumber >= 3) {
-      return _QueueUpdate(
-        queue: queue,
-        failedQuestionId: answer.question.id,
-      );
+      return _QueueUpdate(queue: queue, failedQuestionId: answer.question.id);
     }
 
     queue.add(
@@ -606,6 +647,139 @@ class QuizController extends StateNotifier<AsyncValue<QuizSessionState>> {
     return session.passedQuestionIds.contains(question.id) ||
         session.passedConceptIds.contains(question.conceptId);
   }
+
+  QuizSessionState? _restoreCheckpoint({
+    required QuizSessionCheckpoint? checkpoint,
+    required String materialId,
+    required String materialTitle,
+    required List<Question> questions,
+  }) {
+    if (checkpoint == null || checkpoint.materialId != materialId) {
+      return null;
+    }
+    final byId = {for (final question in questions) question.id: question};
+    if (checkpoint.questionIds.any((id) => !byId.containsKey(id))) return null;
+    final ordered = checkpoint.questionIds.map((id) => byId[id]!).toList();
+    if (ordered.isEmpty || checkpoint.currentIndex >= ordered.length) {
+      return null;
+    }
+    final answers = checkpoint.answers
+        .where((item) => byId.containsKey(item.questionId))
+        .map(
+          (item) => QuizAnswerResult(
+            question: byId[item.questionId]!,
+            selectedAnswer: item.selectedAnswer,
+            isCorrect: item.isCorrect,
+            responseTimeMs: item.responseTimeMs,
+            attemptNumber: item.attemptNumber,
+            retryCount: item.retryCount,
+            hintUsed: item.hintUsed,
+            hintLevel: item.hintLevel,
+          ),
+        )
+        .toList();
+    return QuizSessionState(
+      materialId: materialId,
+      materialTitle: materialTitle,
+      questions: ordered,
+      currentIndex: checkpoint.currentIndex,
+      answers: answers,
+      selectedAnswer: checkpoint.selectedAnswer,
+      isAnswerChecked: checkpoint.isAnswerChecked,
+      questionStartedAt: DateTime.now(),
+      initialQuestionCount: checkpoint.initialQuestionCount.clamp(
+        0,
+        ordered.length,
+      ),
+      incorrectQueue: checkpoint.incorrectQueue
+          .where((item) => byId.containsKey(item.questionId))
+          .map(
+            (item) => ReinforcementQueueItem(
+              question: byId[item.questionId]!,
+              availableAfterIndex: item.availableAfterIndex,
+              failedAttempts: item.failedAttempts,
+            ),
+          )
+          .toList(),
+      hintLevelsByQuestion: checkpoint.hintLevelsByQuestion,
+      passedQuestionIds: checkpoint.passedQuestionIds,
+      passedConceptIds: checkpoint.passedConceptIds,
+      failedQuestionId: checkpoint.failedQuestionId,
+      memoryUpdates: checkpoint.memoryUpdates
+          .map(
+            (item) => MemoryUpdate(
+              conceptId: item.conceptId,
+              previousMemoryScore: item.previousMemoryScore,
+              memoryScore: item.memoryScore,
+              nextReviewAt: item.nextReviewAt,
+            ),
+          )
+          .toList(),
+    );
+  }
+
+  Future<void> _persistCheckpoint() async {
+    final value = state.asData?.value;
+    if (value == null || value.materialId.isEmpty || value.questions.isEmpty) {
+      return;
+    }
+    if (value.isSessionTerminal) {
+      await _ref.read(quizSessionCheckpointRepositoryProvider).clear();
+      return;
+    }
+    await _ref
+        .read(quizSessionCheckpointRepositoryProvider)
+        .save(
+          QuizSessionCheckpoint(
+            materialId: value.materialId,
+            materialTitle: value.materialTitle,
+            questionIds: value.questions.map((q) => q.id).toList(),
+            currentIndex: value.currentIndex,
+            initialQuestionCount: value.initialQuestionCount,
+            answers: value.answers
+                .map(
+                  (a) => QuizAnswerCheckpoint(
+                    questionId: a.question.id,
+                    selectedAnswer: a.selectedAnswer,
+                    isCorrect: a.isCorrect,
+                    responseTimeMs: a.responseTimeMs,
+                    attemptNumber: a.attemptNumber,
+                    retryCount: a.retryCount,
+                    hintUsed: a.hintUsed,
+                    hintLevel: a.hintLevel,
+                  ),
+                )
+                .toList(),
+            incorrectQueue: value.incorrectQueue
+                .map(
+                  (item) => QuizReinforcementCheckpoint(
+                    questionId: item.question.id,
+                    availableAfterIndex: item.availableAfterIndex,
+                    failedAttempts: item.failedAttempts,
+                  ),
+                )
+                .toList(),
+            hintLevelsByQuestion: value.hintLevelsByQuestion,
+            passedQuestionIds: value.passedQuestionIds,
+            passedConceptIds: value.passedConceptIds,
+            memoryUpdates: value.memoryUpdates
+                .map(
+                  (m) => QuizMemoryCheckpoint(
+                    conceptId: m.conceptId,
+                    previousMemoryScore: m.previousMemoryScore,
+                    memoryScore: m.memoryScore,
+                    nextReviewAt: m.nextReviewAt,
+                  ),
+                )
+                .toList(),
+            selectedAnswer: value.selectedAnswer,
+            isAnswerChecked: value.isAnswerChecked,
+            updatedAt: DateTime.now().toUtc(),
+            failedQuestionId: value.failedQuestionId,
+          ),
+        );
+  }
+
   String _normalize(String value) => value.trim().toLowerCase();
 }
 

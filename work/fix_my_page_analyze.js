@@ -1,0 +1,12 @@
+﻿const fs = require('fs');
+const path = require('path');
+const source = path.join(process.cwd(), 'lib/features/home/presentation/pages/my_info_page.dart');
+let s = fs.readFileSync(source, 'utf8');
+s = s.replace(`  const _SettingRow.navigation({\n    required this.label,\n    this.trailingText,\n    this.onTap,\n  }) : value = null,\n       onChanged = null,\n       isLogout = false;`, `  const _SettingRow.navigation({\n    required this.label,\n    this.trailingText,\n  }) : value = null,\n       onTap = null,\n       onChanged = null,\n       isLogout = false;`);
+s = s.replace(`const _currencyTitle = '보유 재화';\n`, '');
+fs.writeFileSync(source, s);
+const test = path.join(process.cwd(), 'test/features/home/my_info_page_test.dart');
+let t = fs.readFileSync(test, 'utf8');
+t = t.replace(/\\\$\{size\.width\}/g, '${size.width}');
+t = t.replace(/\\\$\{size\.height\}/g, '${size.height}');
+fs.writeFileSync(test, t);

@@ -1,14 +1,15 @@
-﻿import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import * as pdfjsLib from "https://esm.sh/pdfjs-dist@4.10.38/legacy/build/pdf.mjs?bundle";
 import * as pdfjsWorker from "https://esm.sh/pdfjs-dist@4.10.38/legacy/build/pdf.worker.mjs?bundle";
+import { MIN_USABLE_CONCEPTS, type Concept } from "../shared/ai/concept_extractor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const MIN_USABLE_CONCEPTS = 5;
-const MIN_PDF_TEXT_LENGTH = 300;
+const PDFJS_CMAP_URL = "https://esm.sh/pdfjs-dist@4.10.38/cmaps/";
+const PDFJS_STANDARD_FONT_DATA_URL = "https://esm.sh/pdfjs-dist@4.10.38/standard_fonts/";
 const MATERIALS_BUCKET = "materials";
 const requiredPdfInputTerms = [
   "ALM",
@@ -32,17 +33,6 @@ type Material = {
   raw_text: string | null;
   structured_text: string | null;
   status: string;
-};
-
-type Concept = {
-  name: string;
-  description: string;
-  importance: number;
-  importance_score: number;
-  concept_type: string;
-  evaluation: Record<string, number>;
-  exclusion_reason: string | null;
-  evidence: string;
 };
 
 type ErrorCode =
@@ -120,11 +110,11 @@ Deno.serve(async (req) => {
     logStep("extract.material.request", { materialId });
 
     const material = await loadMaterial(supabase, materialId, authData.user.id);
-    if (material.status === "concepts_completed" || material.status === "completed") {
+    if (material.status === "completed") {
       const conceptCount = await countConcepts(supabase, materialId);
       return json({
         materialId,
-        status: "concepts_completed",
+        status: "generating",
         conceptCount,
         usedCache: false,
         message: "Core concepts are already extracted.",
@@ -137,14 +127,14 @@ Deno.serve(async (req) => {
       material.id,
       material.file_hash,
     );
-    if (sameHash && sameHash.status !== "concepts_completed" && sameHash.status !== "completed") {
+    if (sameHash && sameHash.status !== "completed") {
       await updateMaterial(supabase, material.id, {
         status: "failed",
         analysis_error: "DUPLICATE_ANALYSIS_IN_PROGRESS: The same file hash already has an analysis job.",
       }, authData.user.id);
       return errorJson(new AppError("DUPLICATE_ANALYSIS_IN_PROGRESS", "The same file hash already has an analysis job.", 409), material.id);
     }
-    if (sameHash && (sameHash.status === "concepts_completed" || sameHash.status === "completed")) {
+    if (sameHash && sameHash.status === "completed") {
       const copiedCount = await copyCachedConcepts(
         supabase,
         authData.user.id,
@@ -156,20 +146,20 @@ Deno.serve(async (req) => {
         throw new AppError("CONCEPTS_INSUFFICIENT", `Cached analysis has only ${copiedCount} usable concepts. At least ${MIN_USABLE_CONCEPTS} are required.`, 422);
       }
       await updateMaterial(supabase, material.id, {
-        status: "concepts_completed",
+        status: "generating",
         analysis_completed_at: new Date().toISOString(),
       }, authData.user.id);
       return json({
         materialId,
-        status: "concepts_completed",
+        status: "generating",
         conceptCount: copiedCount,
         usedCache: true,
         message: "Reused cached analysis for the same file hash.",
       });
     }
 
-    logStep("extract.status.extracting", { materialId: material.id });
-    await updateMaterial(supabase, material.id, { status: "extracting" }, authData.user.id);
+    logStep("extract.status.generating", { materialId: material.id });
+    await updateMaterial(supabase, material.id, { status: "generating" }, authData.user.id);
     const extractedText = await extractStructuredText(supabase, material);
     const structuredText = extractedText.structuredText;
     logStep("extract.text.ready", {
@@ -190,13 +180,10 @@ Deno.serve(async (req) => {
         textPreview: previewText(structuredText, 800),
         requiredTermHits: requiredPdfInputTerms.filter((term) => structuredText.includes(term)),
       });
-      if (!hasRequiredPdfInputSignal(structuredText)) {
-        throw new AppError("PDF_TEXT_EMPTY", "PDF text extraction did not include recognizable document body terms.", 422);
-      }
     }
 
     await updateMaterial(supabase, material.id, {
-      status: "analyzing",
+      status: "generating",
       raw_text: extractedText.rawText,
       structured_text: structuredText,
     }, authData.user.id);
@@ -207,16 +194,23 @@ Deno.serve(async (req) => {
       structuredText,
     });
 
-    const conceptsToSave = concepts.length > 0 ? concepts : fallbackConceptsFromText(structuredText, material.title);
-    if (concepts.length === 0) {
-      logStep("extract.concepts.fallback", {
+    const fallbackConcepts = fallbackConceptsFromText(structuredText, material.title);
+    let conceptsToSave = mergeConceptsByName(concepts);
+    let usableConcepts = usableConceptsForQuiz(conceptsToSave);
+    if (usableConcepts.length < MIN_USABLE_CONCEPTS) {
+      const beforeSupplementCount = usableConcepts.length;
+      conceptsToSave = mergeConceptsByName([...conceptsToSave, ...fallbackConcepts]);
+      usableConcepts = usableConceptsForQuiz(conceptsToSave);
+      logStep("extract.concepts.fallback_supplement", {
         materialId: material.id,
-        conceptCount: conceptsToSave.length,
-        concepts: conceptsToSave.map(conceptLogSummary),
+        openAiConceptCount: concepts.length,
+        fallbackConceptCount: fallbackConcepts.length,
+        usableBeforeSupplement: beforeSupplementCount,
+        usableAfterSupplement: usableConcepts.length,
+        fallbackConcepts: fallbackConcepts.map(conceptLogSummary),
       });
     }
     const usabilityDiagnostics = conceptUsabilityDiagnostics(conceptsToSave);
-    const usableConcepts = usableConceptsForQuiz(conceptsToSave);
     logStep("extract.concepts.quality_gate", {
       materialId: material.id,
       candidateCount: conceptsToSave.length,
@@ -251,13 +245,13 @@ Deno.serve(async (req) => {
     await saveConcepts(supabase, authData.user.id, material.id, usableConcepts);
 
     await updateMaterial(supabase, material.id, {
-      status: "concepts_completed",
+      status: "generating",
       analysis_completed_at: new Date().toISOString(),
     }, authData.user.id);
 
     return json({
       materialId,
-      status: "concepts_completed",
+      status: "generating",
       conceptCount: usableConcepts.length,
       usedCache: false,
       message: "Core concepts extracted by extract-core-concepts.",
@@ -395,15 +389,11 @@ async function extractPdfStructuredText(
   const pdfBytes = await downloadPdfBytes(supabase, material.storage_path);
   const pages = await extractPdfPages(pdfBytes);
   const rawText = normalizeExtractedPdfText(pages.map((page) => page.text).join("\n\n"));
-  if (rawText.length < MIN_PDF_TEXT_LENGTH) {
-    throw new AppError("PDF_TEXT_EMPTY", `PDF text extraction produced only ${rawText.length} characters. OCR/image PDFs are outside MVP scope.`, 422);
+  if (rawText.trim().length === 0) {
+    throw new AppError("PDF_TEXT_EMPTY", "PDF text extraction returned empty text.", 422);
   }
 
   const structuredText = buildPdfStructuredText(material.title, pages);
-  if (structuredText.length < MIN_PDF_TEXT_LENGTH) {
-    throw new AppError("PDF_TEXT_EMPTY", `Structured PDF text produced only ${structuredText.length} characters.`, 422);
-  }
-
   return {
     rawText,
     structuredText,
@@ -450,6 +440,9 @@ async function extractPdfPages(pdfBytes: Uint8Array) {
       disableWorker: true,
       useSystemFonts: true,
       isEvalSupported: false,
+      cMapUrl: PDFJS_CMAP_URL,
+      cMapPacked: true,
+      standardFontDataUrl: PDFJS_STANDARD_FONT_DATA_URL,
     });
     const pdf = await loadingTask.promise;
     logStep("extract.pdf.pdfjs_get_document.success", {
@@ -462,7 +455,7 @@ async function extractPdfPages(pdfBytes: Uint8Array) {
         const page = await pdf.getPage(pageNumber);
         let content;
         try {
-          content = await page.getTextContent();
+          content = await page.getTextContent({ includeMarkedContent: false, disableNormalization: false });
           logStep("extract.pdf.page_text_content.success", {
             pageNumber,
             success: true,
@@ -671,6 +664,7 @@ Accepted concept_type values:
 - metadata_noise
 - generic_noise
 
+Return 8 to 12 save-worthy concepts whenever the material contains enough text. Do not return fewer than 8 concepts unless the material has fewer than 8 distinct supported concepts.
 Only concepts with importance_score >= 65 and exclusion_reason = null will be saved.
 Use Korean for descriptions and evidence summaries. Keep domain acronyms such as IFRS17, ALM, K-ICS in their original form.
 Use only the material below. Do not invent unsupported facts.
@@ -764,6 +758,21 @@ function conceptsArrayFromParsed(parsed: unknown): unknown[] {
   return [];
 }
 
+function mergeConceptsByName(concepts: Concept[]) {
+  const byName = new Map<string, Concept>();
+  for (const concept of concepts) {
+    const name = sanitizeConceptName(concept.name);
+    if (!name) continue;
+    const key = name.toLowerCase();
+    const normalized = { ...concept, name };
+    const existing = byName.get(key);
+    if (!existing || (Number(normalized.importance_score) || 0) > (Number(existing.importance_score) || 0)) {
+      byName.set(key, normalized);
+    }
+  }
+  return [...byName.values()];
+}
+
 function fallbackConceptsFromText(structuredText: string, title: string): Concept[] {
   const keywords = extractFallbackKeywords(structuredText, title).slice(0, 12);
   return keywords
@@ -797,7 +806,7 @@ function fallbackConceptsFromText(structuredText: string, title: string): Concep
 function extractFallbackKeywords(structuredText: string, title: string) {
   const counts = new Map<string, number>();
   const source = structuredText;
-  const tokens = source.match(/[A-Za-z][A-Za-z0-9+./&-]{1,30}|[가-힣][가-힣A-Za-z0-9+./&-]{1,30}/g) ?? [];
+  const tokens = source.match(/[A-Za-z][A-Za-z0-9+./&-]{1,30}|[\p{Script=Hangul}][\p{Script=Hangul}A-Za-z0-9+./&-]{1,30}/gu) ?? [];
   for (const token of tokens) {
     const normalized = token.trim();
     const key = /[A-Za-z]/.test(normalized) ? normalized.toLowerCase() : normalized;
@@ -856,7 +865,7 @@ function sanitizeConceptName(value: unknown) {
   const text = stripInternalIdentifiers(stringFromUnknown(value)).replace(/\s+/g, " ").trim();
   if (!text || rejectCandidateReason(text)) return "";
   if (text.length > 80) return "";
-  if (!/[A-Za-z가-힣]/.test(text)) return "";
+  if (!/[A-Za-z\p{Script=Hangul}]/u.test(text)) return "";
   return text;
 }
 

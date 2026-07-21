@@ -1,21 +1,29 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../../core/config/env.dart';
-import '../../../../shared/design_system/theme/mameroom_theme_extension.dart';
-import '../../../../shared/widgets/mameroom_shell.dart';
-import '../../../../shared/widgets/pixel_placeholders.dart';
 import '../../../home/presentation/pages/home_shell_page.dart';
 import '../../../onboarding/presentation/pages/email_verification_page.dart';
-import 'signup_page.dart';
 import '../providers/auth_controller.dart';
+import '../widgets/auth_design_widgets.dart';
+import 'forgot_password_page.dart';
+import 'signup_page.dart';
+
+const _email = '\uC774\uBA54\uC77C';
+const _password = '\uBE44\uBC00\uBC88\uD638';
+const _login = '\uB85C\uADF8\uC778';
+const _remember = '\uB85C\uADF8\uC778 \uC0C1\uD0DC \uC720\uC9C0';
+const _forgot = '\uBE44\uBC00\uBC88\uD638 \uCC3E\uAE30';
+const _google = 'Google\uB85C \uACC4\uC18D\uD558\uAE30';
+const _apple = 'Apple\uB85C \uACC4\uC18D\uD558\uAE30';
+const _noAccount =
+    '\uC544\uC9C1 \uACC4\uC815\uC774 \uC5C6\uC73C\uC2E0\uAC00\uC694?';
+const _signup = '\uD68C\uC6D0\uAC00\uC785';
 
 class LoginPage extends ConsumerStatefulWidget {
   const LoginPage({super.key});
-
   static const routePath = '/login';
-
   @override
   ConsumerState<LoginPage> createState() => _LoginPageState();
 }
@@ -43,73 +51,46 @@ class _LoginPageState extends ConsumerState<LoginPage> {
           message == previous?.infoMessage) {
         return;
       }
-
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
       ref.read(authControllerProvider.notifier).clearMessages();
     });
-
-    final authFormState = ref.watch(authControllerProvider);
-    final isLoading = authFormState.isLoading;
-    final colors = context.mameroom;
-
-    return MameroomShell(
-      showSparkles: false,
-      child: SingleChildScrollView(
-        child: Form(
-          key: _formKey,
+    final isLoading = ref.watch(authControllerProvider).isLoading;
+    return AuthDesignScaffold(
+      child: Form(
+        key: _formKey,
+        child: AutofillGroup(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const SizedBox(height: 22),
-              const PixelLogo(compact: true),
-              const SizedBox(height: 22),
-              Text(
-                '로그인하고\n나만의 방을 만들어보세요!',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyLarge,
-              ),
-              const SizedBox(height: 28),
-              if (!Env.hasSupabaseConfig) ...[
-                const _ConfigWarning(),
-                const SizedBox(height: 16),
-              ],
-              MameroomTextField(
+              const SizedBox(height: 24),
+              const AuthHeader(),
+              const SizedBox(height: 16),
+              AuthInputField(
                 controller: _emailController,
                 enabled: !isLoading,
-                label: '이메일',
-                icon: Icons.mail_outline,
+                label: _email,
+                hint: 'example@email.com',
                 keyboardType: TextInputType.emailAddress,
                 textInputAction: TextInputAction.next,
-                validator: (value) {
-                  final email = value?.trim() ?? '';
-                  if (email.isEmpty) {
-                    return '이메일을 입력해주세요.';
-                  }
-                  if (!email.contains('@')) {
-                    return '올바른 이메일을 입력해주세요.';
-                  }
-                  return null;
-                },
+                autofillHints: const [AutofillHints.email],
+                validator: _validateEmail,
               ),
-              const SizedBox(height: 14),
-              MameroomTextField(
+              const SizedBox(height: 12),
+              AuthInputField(
                 controller: _passwordController,
                 enabled: !isLoading,
-                label: '비밀번호',
-                icon: Icons.lock_outline,
+                label: _password,
+                hint:
+                    '\uBE44\uBC00\uBC88\uD638\uB97C \uC785\uB825\uD574\uC8FC\uC138\uC694',
                 obscureText: _obscurePassword,
+                showVisibilityToggle: true,
+                onVisibilityToggle: () =>
+                    setState(() => _obscurePassword = !_obscurePassword),
                 textInputAction: TextInputAction.done,
-                suffixIcon: IconButton(
-                  tooltip: _obscurePassword ? '비밀번호 보기' : '비밀번호 숨기기',
-                  onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                  icon: Icon(_obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined),
-                ),
-                validator: (value) {
-                  if ((value ?? '').length < 6) {
-                    return '비밀번호는 6자 이상이어야 합니다.';
-                  }
-                  return null;
-                },
+                autofillHints: const [AutofillHints.password],
+                validator: _validatePassword,
                 onFieldSubmitted: (_) => _submit(),
               ),
               const SizedBox(height: 8),
@@ -117,62 +98,76 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 children: [
                   Checkbox(
                     value: _rememberMe,
-                    onChanged: isLoading ? null : (value) => setState(() => _rememberMe = value ?? true),
+                    onChanged: isLoading
+                        ? null
+                        : (value) =>
+                              setState(() => _rememberMe = value ?? true),
                   ),
                   Expanded(
-                    child: Text('로그인 상태 유지', style: Theme.of(context).textTheme.bodyMedium),
+                    child: Text(
+                      _remember,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                   ),
-                  TextButton(onPressed: isLoading ? null : () {}, child: const Text('비밀번호 찾기')),
+                  TextButton(
+                    onPressed: isLoading
+                        ? null
+                        : () => context.go(ForgotPasswordPage.routePath),
+                    child: const Text(_forgot),
+                  ),
                 ],
               ),
-              const SizedBox(height: 10),
-              MameroomPrimaryButton(
-                label: '로그인',
+              const SizedBox(height: 8),
+              AuthPrimaryButton(
+                label: _login,
                 isLoading: isLoading,
                 onPressed: _submit,
               ),
-              const SizedBox(height: 22),
-              Row(
-                children: [
-                  Expanded(child: Divider(color: colors.line)),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Text('또는', style: Theme.of(context).textTheme.bodyMedium),
-                  ),
-                  Expanded(child: Divider(color: colors.line)),
-                ],
+              const SizedBox(height: 16),
+              const AuthDivider(),
+              const SizedBox(height: 14),
+              AuthSocialButton(
+                label: _google,
+                mark: 'G',
+                onPressed: isLoading ? null : _showSocialPending,
+              ),
+              const SizedBox(height: 8),
+              AuthSocialButton(
+                label: _apple,
+                mark: '\uF8FF',
+                onPressed: isLoading ? null : _showSocialPending,
               ),
               const SizedBox(height: 16),
-              SizedBox(
-                height: 52,
-                child: OutlinedButton.icon(
-                  onPressed: isLoading
-                      ? null
-                      : () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Google 로그인은 이후 단계에서 연결됩니다.')),
-                          );
-                        },
-                  icon: const Text('G', style: TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF4285F4))),
-                  label: const Text('Google로 로그인'),
-                ),
-              ),
-              const SizedBox(height: 20),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text('계정이 없으신가요?', style: Theme.of(context).textTheme.bodyMedium),
+                  Flexible(
+                    child: Text(
+                      _noAccount,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
                   TextButton(
-                    onPressed: isLoading ? null : () => context.go(SignupPage.routePath),
-                    child: const Text('회원가입'),
+                    onPressed: isLoading
+                        ? null
+                        : () => context.go(SignupPage.routePath),
+                    child: const Text(_signup),
                   ),
                 ],
               ),
               TextButton(
                 onPressed: isLoading
                     ? null
-                    : () => context.go(Uri(path: EmailVerificationPage.routePath).toString()),
-                child: const Text('이메일 인증 후 로그인해주세요'),
+                    : () => context.go(
+                        Uri(path: EmailVerificationPage.routePath).toString(),
+                      ),
+                child: const Text(
+                  '\uC774\uBA54\uC77C \uC778\uC99D \uD654\uBA74\uC73C\uB85C',
+                ),
               ),
             ],
           ),
@@ -181,45 +176,44 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     );
   }
 
-  Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) {
-      return;
+  String? _validateEmail(String? value) {
+    final email = value?.trim() ?? '';
+    if (email.isEmpty) {
+      return '\uC774\uBA54\uC77C\uC744 \uC785\uB825\uD574\uC8FC\uC138\uC694.';
     }
+    if (!email.contains('@')) {
+      return '\uC62C\uBC14\uB978 \uC774\uBA54\uC77C\uC744 \uC785\uB825\uD574\uC8FC\uC138\uC694.';
+    }
+    return null;
+  }
 
-    final controller = ref.read(authControllerProvider.notifier);
-    final email = _emailController.text.trim();
-    final password = _passwordController.text;
-
+  String? _validatePassword(String? value) => (value ?? '').length < 6
+      ? '\uBE44\uBC00\uBC88\uD638\uB294 6\uC790 \uC774\uC0C1\uC774\uC5B4\uC57C \uD569\uB2C8\uB2E4.'
+      : null;
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    TextInput.finishAutofillContext();
     try {
-      final result = await controller.signIn(email: email, password: password);
+      final result = await ref
+          .read(authControllerProvider.notifier)
+          .signIn(
+            email: _emailController.text.trim(),
+            password: _passwordController.text,
+          );
       if (!mounted || result != AuthSubmitResult.signedIn) {
         return;
       }
       context.go(HomeShellPage.homeRoutePath);
-    } catch (_) {
-      // Error state is exposed by authControllerProvider and shown by ref.listen.
-    }
+    } catch (_) {}
   }
-}
 
-class _ConfigWarning extends StatelessWidget {
-  const _ConfigWarning();
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.errorContainer,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Text(
-          'Supabase 설정을 확인해주세요. .env에 SUPABASE_URL과 SUPABASE_PUBLISHABLE_KEY가 필요합니다.',
-          style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer),
+  void _showSocialPending() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'OAuth \uC5F0\uB3D9\uC740 \uAE30\uC874 \uB85C\uC9C1\uC744 \uC720\uC9C0\uD569\uB2C8\uB2E4.',
         ),
       ),
     );
   }
 }
-

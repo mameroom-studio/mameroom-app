@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -28,14 +28,19 @@ class _AnalysisPageState extends ConsumerState<AnalysisPage> {
     final materialId = widget.materialId;
     if (materialId != null && materialId.isNotEmpty) {
       Future.microtask(() {
-        ref.read(analysisControllerProvider.notifier).start(materialId: materialId);
+        ref
+            .read(analysisControllerProvider.notifier)
+            .start(materialId: materialId);
       });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<AsyncValue<AnalysisProgress?>>(analysisControllerProvider, (previous, next) {
+    ref.listen<AsyncValue<AnalysisProgress?>>(analysisControllerProvider, (
+      previous,
+      next,
+    ) {
       final progress = next.asData?.value;
       if (progress?.status == MaterialAnalysisStatus.completed &&
           widget.materialId != null &&
@@ -47,8 +52,11 @@ class _AnalysisPageState extends ConsumerState<AnalysisPage> {
     final state = ref.watch(analysisControllerProvider);
     final progress = state.asData?.value;
     final errorKind = _analysisErrorKind(state.error);
-    final currentStatus = progress?.status ?? MaterialAnalysisStatus.uploaded;
-    final displayStatus = state.hasError && errorKind != _AnalysisErrorKind.duplicate ? MaterialAnalysisStatus.failed : currentStatus;
+    final currentStatus = progress?.status ?? MaterialAnalysisStatus.uploading;
+    final displayStatus =
+        state.hasError && errorKind != _AnalysisErrorKind.duplicate
+        ? MaterialAnalysisStatus.failed
+        : currentStatus;
 
     return MameroomShell(
       showSparkles: false,
@@ -58,7 +66,9 @@ class _AnalysisPageState extends ConsumerState<AnalysisPage> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
               children: [
-                _AnalysisHeader(onLibrary: () => context.go(LibraryPage.routePath)),
+                _AnalysisHeader(
+                  onLibrary: () => context.go(LibraryPage.routePath),
+                ),
                 const SizedBox(height: 24),
                 _HeroAnalysisCard(
                   state: state,
@@ -79,8 +89,11 @@ class _AnalysisPageState extends ConsumerState<AnalysisPage> {
                   isDuplicateUpload: errorKind == _AnalysisErrorKind.duplicate,
                   onLibrary: () => context.go(LibraryPage.routePath),
                   onQuiz: () {
-                    if (widget.materialId != null && widget.materialId!.isNotEmpty) {
-                      context.go('${QuizPage.routePath}?materialId=${widget.materialId}');
+                    if (widget.materialId != null &&
+                        widget.materialId!.isNotEmpty) {
+                      context.go(
+                        '${QuizPage.routePath}?materialId=${widget.materialId}',
+                      );
                     }
                   },
                 ),
@@ -94,7 +107,10 @@ class _AnalysisPageState extends ConsumerState<AnalysisPage> {
     return _classifyAnalysisError(message);
   }
 
-  double? _progressValue(AsyncValue<AnalysisProgress?> state, AnalysisProgress? progress) {
+  double? _progressValue(
+    AsyncValue<AnalysisProgress?> state,
+    AnalysisProgress? progress,
+  ) {
     if (state.isLoading) {
       return null;
     }
@@ -117,7 +133,12 @@ class _AnalysisHeader extends StatelessWidget {
       children: [
         const PixelSeed(size: 38),
         const SizedBox(width: 10),
-        Expanded(child: Text('Analysis', style: Theme.of(context).textTheme.titleLarge)),
+        Expanded(
+          child: Text(
+            'Analysis',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+        ),
         TextButton.icon(
           onPressed: onLibrary,
           icon: Icon(Icons.home_outlined, color: colors.primary, size: 18),
@@ -129,7 +150,11 @@ class _AnalysisHeader extends StatelessWidget {
 }
 
 class _HeroAnalysisCard extends StatelessWidget {
-  const _HeroAnalysisCard({required this.state, required this.progress, required this.progressValue});
+  const _HeroAnalysisCard({
+    required this.state,
+    required this.progress,
+    required this.progressValue,
+  });
 
   final AsyncValue<AnalysisProgress?> state;
   final AnalysisProgress? progress;
@@ -138,7 +163,9 @@ class _HeroAnalysisCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.mameroom;
-    final percent = ((progressValue ?? progress?.progress ?? 0.08).clamp(0, 1) * 100).round();
+    final percent =
+        ((progressValue ?? progress?.progress ?? 0.08).clamp(0, 1) * 100)
+            .round();
     final isIndeterminate = state.isLoading && progress == null;
 
     return _AnalysisCard(
@@ -148,11 +175,16 @@ class _HeroAnalysisCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('AI 학습 콘텐츠 생성 중', style: Theme.of(context).textTheme.headlineMedium),
+                Text(
+                  'AI 학습 콘텐츠 생성 중',
+                  style: Theme.of(context).textTheme.headlineMedium,
+                ),
                 const SizedBox(height: 8),
                 Text(
                   '핵심 개념을 뽑고 첫 퀴즈를 준비하고 있어요.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: colors.muted),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(color: colors.muted),
                 ),
                 const SizedBox(height: 18),
                 ClipRRect(
@@ -165,7 +197,12 @@ class _HeroAnalysisCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 10),
-                Text('$percent% 완료', style: Theme.of(context).textTheme.labelLarge?.copyWith(color: colors.primary)),
+                Text(
+                  '$percent% 완료',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelLarge?.copyWith(color: colors.primary),
+                ),
               ],
             ),
           ),
@@ -176,7 +213,8 @@ class _HeroAnalysisCard extends StatelessWidget {
               tween: Tween(begin: 0.94, end: 1),
               duration: const Duration(milliseconds: 600),
               curve: Curves.easeOutBack,
-              builder: (context, scale, child) => Transform.scale(scale: scale, child: child),
+              builder: (context, scale, child) =>
+                  Transform.scale(scale: scale, child: child),
               child: const PixelSeed(size: 72),
             ),
           ),
@@ -190,11 +228,9 @@ class _StatusTimeline extends StatelessWidget {
   const _StatusTimeline({required this.currentStatus});
 
   static const _statuses = [
-    MaterialAnalysisStatus.uploaded,
-    MaterialAnalysisStatus.extracting,
-    MaterialAnalysisStatus.analyzing,
-    MaterialAnalysisStatus.conceptsCompleted,
-    MaterialAnalysisStatus.questionsGenerating,
+    MaterialAnalysisStatus.uploading,
+    MaterialAnalysisStatus.parsing,
+    MaterialAnalysisStatus.generating,
     MaterialAnalysisStatus.completed,
     MaterialAnalysisStatus.failed,
   ];
@@ -213,12 +249,13 @@ class _StatusTimeline extends StatelessWidget {
           ..._statuses.map((status) {
             final isCurrent = status == currentStatus;
             final isDone = _isDone(status, currentStatus);
-            final isFailed = status == MaterialAnalysisStatus.failed && isCurrent;
+            final isFailed =
+                status == MaterialAnalysisStatus.failed && isCurrent;
             final color = isFailed
                 ? Theme.of(context).colorScheme.error
                 : isCurrent || isDone
-                    ? colors.primary
-                    : colors.line;
+                ? colors.primary
+                : colors.line;
             return Padding(
               padding: const EdgeInsets.only(bottom: 12),
               child: Row(
@@ -229,7 +266,10 @@ class _StatusTimeline extends StatelessWidget {
                     height: 34,
                     decoration: BoxDecoration(
                       color: isDone ? color : colors.paper,
-                      border: Border.all(color: color, width: isCurrent ? 3 : 2),
+                      border: Border.all(
+                        color: color,
+                        width: isCurrent ? 3 : 2,
+                      ),
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
@@ -243,8 +283,16 @@ class _StatusTimeline extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(_koreanLabel(status), style: Theme.of(context).textTheme.titleMedium),
-                        Text(status.value, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: colors.muted)),
+                        Text(
+                          _koreanLabel(status),
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        Text(
+                          status.value,
+                          style: Theme.of(
+                            context,
+                          ).textTheme.bodySmall?.copyWith(color: colors.muted),
+                        ),
                       ],
                     ),
                   ),
@@ -252,7 +300,10 @@ class _StatusTimeline extends StatelessWidget {
                     SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: colors.primary),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: colors.primary,
+                      ),
                     ),
                 ],
               ),
@@ -263,23 +314,25 @@ class _StatusTimeline extends StatelessWidget {
     );
   }
 
-  bool _isDone(MaterialAnalysisStatus status, MaterialAnalysisStatus currentStatus) {
+  bool _isDone(
+    MaterialAnalysisStatus status,
+    MaterialAnalysisStatus currentStatus,
+  ) {
     if (currentStatus == MaterialAnalysisStatus.failed) {
       return false;
     }
-    if (currentStatus == MaterialAnalysisStatus.conceptsCompleted || currentStatus == MaterialAnalysisStatus.completed) {
-      return status != MaterialAnalysisStatus.failed && status.index < currentStatus.index;
+    if (currentStatus == MaterialAnalysisStatus.completed) {
+      return status != MaterialAnalysisStatus.failed &&
+          status.index < currentStatus.index;
     }
     return status.index < currentStatus.index;
   }
 
   IconData _iconFor(MaterialAnalysisStatus status) {
     return switch (status) {
-      MaterialAnalysisStatus.uploaded => Icons.upload_file_outlined,
-      MaterialAnalysisStatus.extracting => Icons.text_snippet_outlined,
-      MaterialAnalysisStatus.analyzing => Icons.psychology_alt_outlined,
-      MaterialAnalysisStatus.conceptsCompleted => Icons.spa_outlined,
-      MaterialAnalysisStatus.questionsGenerating => Icons.quiz_outlined,
+      MaterialAnalysisStatus.uploading => Icons.cloud_upload_outlined,
+      MaterialAnalysisStatus.parsing => Icons.picture_as_pdf_outlined,
+      MaterialAnalysisStatus.generating => Icons.auto_awesome_outlined,
       MaterialAnalysisStatus.completed => Icons.check_circle_outline,
       MaterialAnalysisStatus.failed => Icons.error_outline,
     };
@@ -287,11 +340,9 @@ class _StatusTimeline extends StatelessWidget {
 
   String _koreanLabel(MaterialAnalysisStatus status) {
     return switch (status) {
-      MaterialAnalysisStatus.uploaded => '자료 업로드 완료',
-      MaterialAnalysisStatus.extracting => '텍스트 추출',
-      MaterialAnalysisStatus.analyzing => '핵심 개념 분석',
-      MaterialAnalysisStatus.conceptsCompleted => '핵심 개념 준비 완료',
-      MaterialAnalysisStatus.questionsGenerating => '첫 퀴즈 생성',
+      MaterialAnalysisStatus.uploading => 'PDF 업로드',
+      MaterialAnalysisStatus.parsing => 'PDF 파싱',
+      MaterialAnalysisStatus.generating => '콘텐츠 생성',
       MaterialAnalysisStatus.completed => '학습 준비 완료',
       MaterialAnalysisStatus.failed => '분석 실패',
     };
@@ -299,13 +350,15 @@ class _StatusTimeline extends StatelessWidget {
 }
 
 class _AnalysisMessage extends StatelessWidget {
-  const _AnalysisMessage({required this.state, required this.progress, required this.onOpenLibrary});
+  const _AnalysisMessage({
+    required this.state,
+    required this.progress,
+    required this.onOpenLibrary,
+  });
 
   final AsyncValue<AnalysisProgress?> state;
   final AnalysisProgress? progress;
   final VoidCallback onOpenLibrary;
-
-
 
   @override
   Widget build(BuildContext context) {
@@ -321,15 +374,20 @@ class _AnalysisMessage extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(isDuplicateUpload ? Icons.info_outline : Icons.error_outline, color: isDuplicateUpload ? colors.primary : Theme.of(context).colorScheme.error),
+                Icon(
+                  isDuplicateUpload ? Icons.info_outline : Icons.error_outline,
+                  color: isDuplicateUpload
+                      ? colors.primary
+                      : Theme.of(context).colorScheme.error,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     isDuplicateUpload
                         ? '이미 업로드된 자료입니다'
                         : isConceptsEmpty
-                            ? '문제를 만들 핵심 개념을 찾지 못했어요.'
-                            : '분석에 실패했어요',
+                        ? '문제를 만들 핵심 개념을 찾지 못했어요.'
+                        : '분석에 실패했어요',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
@@ -340,16 +398,21 @@ class _AnalysisMessage extends StatelessWidget {
               isDuplicateUpload
                   ? '같은 파일의 분석이 이미 진행 중이거나 완료되었습니다. 라이브러리에서 기존 자료를 이어서 학습할 수 있습니다.'
                   : isConceptsEmpty
-                      ? '문서에서 시험 문제로 만들 수 있는 핵심 개념이 충분히 추출되지 않았습니다. 원본 오류: $message'
-                      : message,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: colors.muted),
+                  ? '문서에서 시험 문제로 만들 수 있는 핵심 개념이 충분히 추출되지 않았습니다. 원본 오류: $message'
+                  : message,
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: colors.muted),
             ),
             if (isDuplicateUpload) ...[
               const SizedBox(height: 14),
               SizedBox(
                 height: 52,
                 width: double.infinity,
-                child: FilledButton(onPressed: onOpenLibrary, child: const Text('기존 자료 보러가기')),
+                child: FilledButton(
+                  onPressed: onOpenLibrary,
+                  child: const Text('기존 자료 보러가기'),
+                ),
               ),
             ],
           ],
@@ -380,7 +443,9 @@ class _AnalysisMessage extends StatelessWidget {
                 const SizedBox(height: 5),
                 Text(
                   '저장된 개념 $conceptCount개${progress?.usedCache == true ? ' · 캐시 사용' : ''}',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: colors.muted),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(color: colors.muted),
                 ),
               ],
             ),
@@ -392,7 +457,12 @@ class _AnalysisMessage extends StatelessWidget {
 }
 
 class _BottomAction extends StatelessWidget {
-  const _BottomAction({required this.progress, required this.isDuplicateUpload, required this.onLibrary, required this.onQuiz});
+  const _BottomAction({
+    required this.progress,
+    required this.isDuplicateUpload,
+    required this.onLibrary,
+    required this.onQuiz,
+  });
 
   final AnalysisProgress? progress;
   final bool isDuplicateUpload;
@@ -405,8 +475,16 @@ class _BottomAction extends StatelessWidget {
     return SizedBox(
       height: 56,
       child: FilledButton.icon(
-        onPressed: canStart ? onQuiz : isDuplicateUpload ? onLibrary : null,
-        style: FilledButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+        onPressed: canStart
+            ? onQuiz
+            : isDuplicateUpload
+            ? onLibrary
+            : null,
+        style: FilledButton.styleFrom(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+        ),
         icon: Icon(canStart ? Icons.play_arrow_rounded : Icons.home_outlined),
         label: Text(canStart ? '퀴즈 시작하기' : '라이브러리로 돌아가기'),
       ),
@@ -435,7 +513,10 @@ class _MissingMaterialId extends StatelessWidget {
               SizedBox(
                 height: 52,
                 width: double.infinity,
-                child: FilledButton(onPressed: onBack, child: const Text('라이브러리로 돌아가기')),
+                child: FilledButton(
+                  onPressed: onBack,
+                  child: const Text('라이브러리로 돌아가기'),
+                ),
               ),
             ],
           ),
@@ -472,13 +553,13 @@ class _AnalysisCard extends StatelessWidget {
   }
 }
 
-
 enum _AnalysisErrorKind { duplicate, conceptsEmpty, other }
 
 _AnalysisErrorKind _classifyAnalysisError(String message) {
   final upper = message.toUpperCase();
   final lower = message.toLowerCase();
-  if (upper.contains('CONCEPTS_EMPTY') || upper.contains('CONCEPTS_INSUFFICIENT')) {
+  if (upper.contains('CONCEPTS_EMPTY') ||
+      upper.contains('CONCEPTS_INSUFFICIENT')) {
     return _AnalysisErrorKind.conceptsEmpty;
   }
   if (upper.contains('DUPLICATE_MATERIAL') ||

@@ -20,8 +20,13 @@ class AuthUseCase {
   Future<AppUser?> signUpWithEmail({
     required String email,
     required String password,
+    Map<String, dynamic>? data,
   }) {
-    return repository.signUpWithEmail(email: email, password: password);
+    return repository.signUpWithEmail(
+      email: email,
+      password: password,
+      data: data,
+    );
   }
 
   Future<void> signOut() {

@@ -4,11 +4,11 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:syncfusion_flutter_pdf/pdf.dart';
 
 import '../../../../shared/supabase/storage_buckets.dart';
 import '../../../../shared/supabase/supabase_tables.dart';
 import '../../domain/entities/upload_job.dart';
+import '../../domain/entities/upload_material_draft.dart';
 import '../../domain/entities/upload_result.dart';
 import 'local_file_bytes_reader.dart';
 
@@ -16,17 +16,65 @@ class UploadRemoteDataSource {
   const UploadRemoteDataSource(this._client);
 
   final SupabaseClient _client;
-  static const int _minimumPdfTextLength = 300;
+  Future<UploadMaterialDraft> loadMaterialDraft(String materialId) async {
+    final user = _client.auth.currentUser;
+    if (user == null) throw StateError('User session is required.');
+    final row = await _client
+        .from(SupabaseTables.studyMaterials)
+        .select('id,title,raw_text')
+        .eq('id', materialId)
+        .eq('user_id', user.id)
+        .maybeSingle();
+    if (row == null) throw StateError('Study material was not found.');
+    final content = row['raw_text']?.toString().trim() ?? '';
+    if (content.isEmpty) throw StateError('PDF_TEXT_EMPTY');
+    return UploadMaterialDraft(
+      materialId: row['id'].toString(),
+      title: row['title']?.toString() ?? '',
+      content: content,
+    );
+  }
 
-  Future<UploadResult> createMaterialFromDraft(UploadJob job) async {
+  Future<void> updateMaterialDraft({
+    required String materialId,
+    required String title,
+    required String content,
+  }) async {
+    final user = _client.auth.currentUser;
+    if (user == null) throw StateError('User session is required.');
+    final rows = await _client
+        .from(SupabaseTables.studyMaterials)
+        .update({
+          'title': title.trim(),
+          'raw_text': content.trim(),
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        })
+        .eq('id', materialId)
+        .eq('user_id', user.id)
+        .select('id');
+    if (rows.isEmpty) throw StateError('Material update was not allowed.');
+  }
+
+  Future<UploadResult> createMaterialFromDraft(
+    UploadJob job, {
+    void Function(UploadTransferStage stage)? onStage,
+  }) async {
     final user = _client.auth.currentUser;
     if (user == null) {
       throw StateError('User session is required to upload materials.');
     }
 
+    if (job.sourceType == UploadSourceType.pdf) {
+      return _createPdfMaterialFromDraft(
+        userId: user.id,
+        job: job,
+        onStage: onStage,
+      );
+    }
+
+    onStage?.call(UploadTransferStage.saving);
     final materialId = _newUuidV4();
     final fileHash = await _hashFor(job);
-    final extractedText = await _extractPdfTextIfPossible(job);
     final storagePath = await _uploadOriginalFileIfNeeded(
       userId: user.id,
       materialId: materialId,
@@ -38,8 +86,9 @@ class UploadRemoteDataSource {
       'STOP-13 study_material.insert.start',
       job: job,
       materialId: materialId,
-      rawTextLength: extractedText?.rawText.length,
-      structuredTextLength: extractedText?.structuredText.length,
+      rawTextLength: job.sourceType == UploadSourceType.text
+          ? job.textContent?.length
+          : null,
       elapsedMs: 0,
     );
     try {
@@ -50,17 +99,19 @@ class UploadRemoteDataSource {
         'source_type': _sourceTypeValue(job.sourceType),
         'file_hash': fileHash,
         'storage_path': storagePath,
-        'raw_text': extractedText?.rawText ??
-            (job.sourceType == UploadSourceType.text ? job.textContent : null),
-        'structured_text': extractedText?.structuredText,
-        'status': 'uploaded',
+        'raw_text': job.sourceType == UploadSourceType.text
+            ? job.textContent
+            : null,
+        'structured_text': null,
+        'status': 'uploading',
       });
       _logUploadStop(
         'STOP-14 study_material.insert.success',
         job: job,
         materialId: materialId,
-        rawTextLength: extractedText?.rawText.length,
-        structuredTextLength: extractedText?.structuredText.length,
+        rawTextLength: job.sourceType == UploadSourceType.text
+            ? job.textContent?.length
+            : null,
         elapsedMs: insertStopwatch.elapsedMilliseconds,
       );
     } catch (error, stackTrace) {
@@ -68,8 +119,6 @@ class UploadRemoteDataSource {
         'STOP-13 study_material.insert.start',
         job: job,
         materialId: materialId,
-        rawTextLength: extractedText?.rawText.length,
-        structuredTextLength: extractedText?.structuredText.length,
         elapsedMs: insertStopwatch.elapsedMilliseconds,
         exception: error,
         stackTrace: stackTrace,
@@ -82,6 +131,144 @@ class UploadRemoteDataSource {
       storagePath: storagePath,
       fileHash: fileHash,
     );
+  }
+
+  Future<UploadResult> _createPdfMaterialFromDraft({
+    required String userId,
+    required UploadJob job,
+    void Function(UploadTransferStage stage)? onStage,
+  }) async {
+    onStage?.call(UploadTransferStage.saving);
+    final materialId = _newUuidV4();
+    final fileBytes = await _bytesFor(job);
+    final fileHash = sha256.convert(fileBytes).toString();
+    final storagePath = [
+      userId,
+      materialId,
+      _storageObjectFileName(materialId, job),
+    ].join('/');
+
+    onStage?.call(UploadTransferStage.uploadingPdf);
+    final uploadStopwatch = Stopwatch()..start();
+    _logUploadStop(
+      'PDF-UPLOAD-01 storage.upload.start',
+      job: job,
+      materialId: materialId,
+      storagePath: storagePath,
+      bytesLength: fileBytes.length,
+      elapsedMs: 0,
+    );
+    try {
+      await _client.storage
+          .from(StorageBuckets.pdfUploads)
+          .uploadBinary(
+            storagePath,
+            fileBytes,
+            fileOptions: const FileOptions(
+              upsert: false,
+              contentType: 'application/pdf',
+            ),
+          );
+      _logUploadStop(
+        'PDF-UPLOAD-02 storage.upload.success',
+        job: job,
+        materialId: materialId,
+        storagePath: storagePath,
+        bytesLength: fileBytes.length,
+        elapsedMs: uploadStopwatch.elapsedMilliseconds,
+      );
+    } catch (error, stackTrace) {
+      _logUploadStop(
+        'PDF-UPLOAD-01 storage.upload.start',
+        job: job,
+        materialId: materialId,
+        storagePath: storagePath,
+        bytesLength: fileBytes.length,
+        elapsedMs: uploadStopwatch.elapsedMilliseconds,
+        exception: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+
+    await _client.from(SupabaseTables.studyMaterials).insert({
+      'id': materialId,
+      'user_id': userId,
+      'title': job.displayName,
+      'source_type': 'pdf',
+      'file_hash': fileHash,
+      'storage_path': storagePath,
+      'raw_text': null,
+      'structured_text': null,
+      'status': 'uploading',
+    });
+
+    onStage?.call(UploadTransferStage.extractingPdfText);
+    await _invokeAnalyzePdf(
+      materialId: materialId,
+      storagePath: storagePath,
+      job: job,
+    );
+
+    return UploadResult(
+      materialId: materialId,
+      storagePath: storagePath,
+      fileHash: fileHash,
+    );
+  }
+
+  Future<void> _invokeAnalyzePdf({
+    required String materialId,
+    required String storagePath,
+    required UploadJob job,
+  }) async {
+    final stopwatch = Stopwatch()..start();
+    _logUploadStop(
+      'PDF-ANALYZE-01 function.invoke.start',
+      job: job,
+      materialId: materialId,
+      storagePath: storagePath,
+      extractorName: 'analyze-pdf',
+      elapsedMs: 0,
+    );
+    try {
+      await _client.functions.invoke(
+        'analyze-pdf',
+        body: {'materialId': materialId, 'storagePath': storagePath},
+      );
+      _logUploadStop(
+        'PDF-ANALYZE-02 function.invoke.success',
+        job: job,
+        materialId: materialId,
+        storagePath: storagePath,
+        extractorName: 'analyze-pdf',
+        elapsedMs: stopwatch.elapsedMilliseconds,
+      );
+    } on FunctionException catch (error, stackTrace) {
+      _logUploadStop(
+        'PDF-ANALYZE-03 function.invoke.failed',
+        job: job,
+        materialId: materialId,
+        storagePath: storagePath,
+        extractorName: 'analyze-pdf',
+        elapsedMs: stopwatch.elapsedMilliseconds,
+        exception: error,
+        stackTrace: stackTrace,
+      );
+      throw StateError(_functionErrorMessage('analyze-pdf', error));
+    } catch (error, stackTrace) {
+      _logUploadStop(
+        'PDF-ANALYZE-03 function.invoke.failed',
+        job: job,
+        materialId: materialId,
+        storagePath: storagePath,
+        extractorName: 'analyze-pdf',
+        elapsedMs: stopwatch.elapsedMilliseconds,
+        exception: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
   }
 
   Future<String?> _uploadOriginalFileIfNeeded({
@@ -105,11 +292,14 @@ class UploadRemoteDataSource {
       'STOP-11 storage.upload.start',
       job: job,
       materialId: materialId,
+      storagePath: storagePath,
       bytesLength: fileBytes.length,
       elapsedMs: 0,
     );
     try {
-      await _client.storage.from(StorageBuckets.materials).uploadBinary(
+      await _client.storage
+          .from(StorageBuckets.materials)
+          .uploadBinary(
             storagePath,
             fileBytes,
             fileOptions: FileOptions(
@@ -121,6 +311,7 @@ class UploadRemoteDataSource {
         'STOP-12 storage.upload.success',
         job: job,
         materialId: materialId,
+        storagePath: storagePath,
         bytesLength: fileBytes.length,
         elapsedMs: uploadStopwatch.elapsedMilliseconds,
       );
@@ -129,6 +320,7 @@ class UploadRemoteDataSource {
         'STOP-11 storage.upload.start',
         job: job,
         materialId: materialId,
+        storagePath: storagePath,
         bytesLength: fileBytes.length,
         elapsedMs: uploadStopwatch.elapsedMilliseconds,
         exception: error,
@@ -151,11 +343,7 @@ class UploadRemoteDataSource {
 
   Future<Uint8List> _bytesFor(UploadJob job) async {
     final stopwatch = Stopwatch()..start();
-    _logUploadStop(
-      'STOP-02 file.bytes.read.start',
-      job: job,
-      elapsedMs: 0,
-    );
+    _logUploadStop('STOP-02 file.bytes.read.start', job: job, elapsedMs: 0);
     try {
       final bytes = job.bytes;
       if (bytes != null && bytes.isNotEmpty) {
@@ -180,7 +368,9 @@ class UploadRemoteDataSource {
         return fileBytes;
       }
 
-      throw StateError('Selected file bytes are unavailable. Please select the file again.');
+      throw StateError(
+        'Selected file bytes are unavailable. Please select the file again.',
+      );
     } catch (error, stackTrace) {
       _logUploadStop(
         'STOP-02 file.bytes.read.start',
@@ -193,146 +383,11 @@ class UploadRemoteDataSource {
     }
   }
 
-  Future<_ExtractedPdfText?> _extractPdfTextIfPossible(UploadJob job) async {
-    if (job.sourceType != UploadSourceType.pdf) {
-      return null;
-    }
-
-    _logUploadStop(
-      'STOP-04 pdf.extract.start',
-      job: job,
-      extractorName: 'syncfusion_flutter_pdf',
-      elapsedMs: 0,
-    );
-    if (kIsWeb) {
-      // Syncfusion text extraction is synchronous and can freeze Flutter Web's UI thread.
-      _logUploadStop(
-        'STOP-04 pdf.extract.start',
-        job: job,
-        extractorName: 'syncfusion_flutter_pdf',
-        elapsedMs: 0,
-        exceptionMessage: 'skipped on Flutter Web to avoid synchronous UI-thread freeze',
-      );
-      return null;
-    }
-
-    try {
-      final fileBytes = await _bytesFor(job);
-      final documentStopwatch = Stopwatch()..start();
-      _logUploadStop(
-        'STOP-05 pdf.document.create.start',
-        job: job,
-        bytesLength: fileBytes.length,
-        extractorName: 'syncfusion_flutter_pdf_isolate',
-        elapsedMs: 0,
-      );
-      _logUploadStop(
-        'STOP-07 pdf.text.extract.start',
-        job: job,
-        bytesLength: fileBytes.length,
-        extractorName: 'syncfusion_flutter_pdf_isolate',
-        elapsedMs: 0,
-      );
-
-      late final Map<String, Object?> extraction;
-      try {
-        extraction = await compute(_extractPdfTextFromBytesInBackground, fileBytes)
-            .timeout(const Duration(seconds: 45));
-      } catch (error, stackTrace) {
-        _logUploadStop(
-          'STOP-07 pdf.text.extract.start',
-          job: job,
-          bytesLength: fileBytes.length,
-          extractorName: 'syncfusion_flutter_pdf_isolate',
-          elapsedMs: documentStopwatch.elapsedMilliseconds,
-          exception: error,
-          stackTrace: stackTrace,
-        );
-        rethrow;
-      }
-
-      final text = extraction['text'] as String? ?? '';
-      final documentMs = extraction['documentMs'] as int? ?? documentStopwatch.elapsedMilliseconds;
-      final textMs = extraction['textMs'] as int? ?? documentStopwatch.elapsedMilliseconds;
-      _logUploadStop(
-        'STOP-06 pdf.document.create.success',
-        job: job,
-        bytesLength: fileBytes.length,
-        extractorName: 'syncfusion_flutter_pdf_isolate',
-        elapsedMs: documentMs,
-      );
-      _logUploadStop(
-        'STOP-08 pdf.text.extract.success',
-        job: job,
-        bytesLength: fileBytes.length,
-        rawTextLength: text.length,
-        extractorName: 'syncfusion_flutter_pdf_isolate',
-        elapsedMs: textMs,
-      );
-
-      if (text.length < _minimumPdfTextLength) {
-        return null;
-      }
-
-      final structuredStopwatch = Stopwatch()..start();
-      _logUploadStop(
-        'STOP-09 structured_text.build.start',
-        job: job,
-        rawTextLength: text.length,
-        extractorName: 'syncfusion_flutter_pdf_isolate',
-        elapsedMs: 0,
-      );
-      try {
-        final structuredText = _structuredTextForPdf(
-          title: job.displayName,
-          text: text,
-        );
-        _logUploadStop(
-          'STOP-10 structured_text.build.success',
-          job: job,
-          rawTextLength: text.length,
-          structuredTextLength: structuredText.length,
-          extractorName: 'syncfusion_flutter_pdf_isolate',
-          elapsedMs: structuredStopwatch.elapsedMilliseconds,
-        );
-        return _ExtractedPdfText(
-          rawText: text,
-          structuredText: structuredText,
-        );
-      } catch (error, stackTrace) {
-        _logUploadStop(
-          'STOP-09 structured_text.build.start',
-          job: job,
-          rawTextLength: text.length,
-          extractorName: 'syncfusion_flutter_pdf_isolate',
-          elapsedMs: structuredStopwatch.elapsedMilliseconds,
-          exception: error,
-          stackTrace: stackTrace,
-        );
-        rethrow;
-      }
-    } catch (error, stackTrace) {
-      _logUploadStop(
-        'STOP-04 pdf.extract.start',
-        job: job,
-        extractorName: 'syncfusion_flutter_pdf',
-        exception: error,
-        stackTrace: stackTrace,
-      );
-      return null;
-    }
-  }
-
-  String _structuredTextForPdf({
-    required String title,
-    required String text,
-  }) {
-    return 'Title: $title\nSource type: pdf\n\n[Page 1]\n$text';
-  }
-void _logUploadStop(
+  void _logUploadStop(
     String stopPoint, {
     required UploadJob job,
     String? materialId,
+    String? storagePath,
     int? bytesLength,
     int? rawTextLength,
     int? structuredTextLength,
@@ -340,23 +395,27 @@ void _logUploadStop(
     int? elapsedMs,
     Object? exception,
     String? exceptionMessage,
+    String? reason,
     StackTrace? stackTrace,
   }) {
     final payload = jsonEncode({
       'stopPoint': stopPoint,
+      'analysisId': materialId,
       'materialId': materialId,
+      'storagePath': storagePath,
       'materialTitle': job.displayName,
       'fileExtension': _extensionFor(job.displayName),
       'fileSize': job.sizeBytes,
       'bytesLength': bytesLength,
       'elapsedMs': elapsedMs,
+      'textLength': rawTextLength,
       'rawTextLength': rawTextLength,
       'structuredTextLength': structuredTextLength,
       'extractorName': extractorName,
       'isFlutterWeb': kIsWeb,
+      'reason': reason,
       'exceptionMessage': exceptionMessage ?? exception?.toString(),
       'stackTrace': stackTrace?.toString(),
-
     });
 
     debugPrint('[upload-flow] $payload');
@@ -432,38 +491,19 @@ void _logUploadStop(
   }
 }
 
-class _ExtractedPdfText {
-  const _ExtractedPdfText({
-    required this.rawText,
-    required this.structuredText,
-  });
-
-  final String rawText;
-  final String structuredText;
-}
-Map<String, Object?> _extractPdfTextFromBytesInBackground(Uint8List inputBytes) {
-  final documentStopwatch = Stopwatch()..start();
-  final document = PdfDocument(inputBytes: inputBytes);
-  final documentMs = documentStopwatch.elapsedMilliseconds;
-  try {
-    final textStopwatch = Stopwatch()..start();
-    final text = _normalizePdfTextForUpload(PdfTextExtractor(document).extractText());
-    return <String, Object?>{
-      'text': text,
-      'documentMs': documentMs,
-      'textMs': textStopwatch.elapsedMilliseconds,
-    };
-  } finally {
-    document.dispose();
+String _functionErrorMessage(String functionName, FunctionException error) {
+  final details = error.details;
+  if (details is Map) {
+    final code = details['code']?.toString();
+    final message =
+        details['error']?.toString() ?? details['message']?.toString();
+    final suffix = code == null || code.isEmpty ? '' : '$code: ';
+    if (message != null && message.isNotEmpty) {
+      return '$functionName failed (${error.status}): $suffix$message';
+    }
   }
-}
-
-String _normalizePdfTextForUpload(String value) {
-  return value
-      .replaceAll('\u0000', '')
-      .replaceAll(RegExp(r'[ \t]+'), ' ')
-      .replaceAll(RegExp(r'\s+\n'), '\n')
-      .replaceAll(RegExp(r'\n\s+'), '\n')
-      .replaceAll(RegExp(r'\n{3,}'), '\n\n')
-      .trim();
+  if (details is String && details.isNotEmpty) {
+    return '$functionName failed (${error.status}): $details';
+  }
+  return '$functionName failed (${error.status}).';
 }

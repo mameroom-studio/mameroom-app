@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../assets/app_assets.dart';
 import '../design_system/theme/mameroom_theme_extension.dart';
 
 class PixelLogo extends StatelessWidget {
@@ -9,45 +10,14 @@ class PixelLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.mameroom;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Text(
-              'M',
-              style: TextStyle(
-                color: colors.primarySoft,
-                fontSize: compact ? 78 : 118,
-                height: 0.82,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0,
-                shadows: [
-                  Shadow(color: colors.ink, offset: const Offset(2, 2)),
-                  const Shadow(color: Colors.white, offset: Offset(-2, -2)),
-                ],
-              ),
-            ),
-            Positioned(
-              right: compact ? -14 : -18,
-              bottom: compact ? -6 : -8,
-              child: PixelSeed(size: compact ? 36 : 46),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'MAMEROOM',
-          style: TextStyle(
-            color: colors.ink,
-            fontSize: compact ? 22 : 32,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 1.2,
-          ),
-        ),
-      ],
+    final size = compact ? 122.0 : 178.0;
+    return SizedBox.square(
+      dimension: size,
+      child: Image.asset(
+        AppAssets.mameroomIcon,
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.none,
+      ),
     );
   }
 }
@@ -78,19 +48,13 @@ class PixelLamp extends StatelessWidget {
     return SizedBox(
       width: size,
       height: size,
-      child: CustomPaint(
-        painter: _LampPainter(colors),
-      ),
+      child: CustomPaint(painter: _LampPainter(colors)),
     );
   }
 }
 
 class PixelCharacter extends StatelessWidget {
-  const PixelCharacter({
-    this.size = 120,
-    this.streak,
-    super.key,
-  });
+  const PixelCharacter({this.size = 120, this.streak, super.key});
 
   final double size;
   final int? streak;
@@ -120,9 +84,9 @@ class PixelCharacter extends StatelessWidget {
                 child: Text(
                   '🔥 $streak',
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        color: context.mameroom.ink,
-                      ),
+                    fontWeight: FontWeight.w800,
+                    color: context.mameroom.ink,
+                  ),
                 ),
               ),
             ),
@@ -167,11 +131,7 @@ class PixelRoomScene extends StatelessWidget {
             bottom: 56,
             child: PixelCharacter(size: 82, streak: streak),
           ),
-          Positioned(
-            right: 78,
-            bottom: 54,
-            child: PixelSeed(size: 42),
-          ),
+          Positioned(right: 78, bottom: 54, child: PixelSeed(size: 42)),
         ],
       ),
     );
@@ -303,7 +263,8 @@ class _SeedPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _SeedPainter oldDelegate) => oldDelegate.colors != colors;
+  bool shouldRepaint(covariant _SeedPainter oldDelegate) =>
+      oldDelegate.colors != colors;
 }
 
 class _LampPainter extends CustomPainter {
@@ -328,14 +289,27 @@ class _LampPainter extends CustomPainter {
       glow,
     );
     canvas.drawRect(Rect.fromLTWH(7.4 * unit, 0, 1.2 * unit, 5 * unit), dark);
-    canvas.drawRect(Rect.fromLTWH(5 * unit, 5 * unit, 6 * unit, 2 * unit), dark);
-    canvas.drawRect(Rect.fromLTWH(4 * unit, 7 * unit, 8 * unit, 3 * unit), purple);
-    canvas.drawRect(Rect.fromLTWH(5 * unit, 10 * unit, 6 * unit, 1 * unit), dark);
-    canvas.drawRect(Rect.fromLTWH(7 * unit, 11 * unit, 2 * unit, 1 * unit), light);
+    canvas.drawRect(
+      Rect.fromLTWH(5 * unit, 5 * unit, 6 * unit, 2 * unit),
+      dark,
+    );
+    canvas.drawRect(
+      Rect.fromLTWH(4 * unit, 7 * unit, 8 * unit, 3 * unit),
+      purple,
+    );
+    canvas.drawRect(
+      Rect.fromLTWH(5 * unit, 10 * unit, 6 * unit, 1 * unit),
+      dark,
+    );
+    canvas.drawRect(
+      Rect.fromLTWH(7 * unit, 11 * unit, 2 * unit, 1 * unit),
+      light,
+    );
   }
 
   @override
-  bool shouldRepaint(covariant _LampPainter oldDelegate) => oldDelegate.colors != colors;
+  bool shouldRepaint(covariant _LampPainter oldDelegate) =>
+      oldDelegate.colors != colors;
 }
 
 class _CharacterPainter extends CustomPainter {
@@ -353,7 +327,10 @@ class _CharacterPainter extends CustomPainter {
     final green = Paint()..color = colors.seedGreen;
 
     void rect(Paint paint, int x, int y, int w, int h) {
-      canvas.drawRect(Rect.fromLTWH(x * unit, y * unit, w * unit, h * unit), paint);
+      canvas.drawRect(
+        Rect.fromLTWH(x * unit, y * unit, w * unit, h * unit),
+        paint,
+      );
     }
 
     rect(hair, 5, 5, 10, 5);
@@ -373,7 +350,8 @@ class _CharacterPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _CharacterPainter oldDelegate) => oldDelegate.colors != colors;
+  bool shouldRepaint(covariant _CharacterPainter oldDelegate) =>
+      oldDelegate.colors != colors;
 }
 
 class _RoomPainter extends CustomPainter {
@@ -418,7 +396,8 @@ class _RoomPainter extends CustomPainter {
     canvas.drawPath(floorPath, line);
 
     if (progress != null) {
-      final curtain = Paint()..color = Colors.white.withValues(alpha: 1 - progress!.clamp(0, 1));
+      final curtain = Paint()
+        ..color = Colors.white.withValues(alpha: 1 - progress!.clamp(0, 1));
       canvas.drawRect(Offset.zero & size, curtain);
     }
   }

@@ -1,10 +1,16 @@
-import 'package:flutter/material.dart';
+import '../tokens/mameroom_typography.dart';
 
 class AppTextStyles {
   const AppTextStyles._();
 
-  static const title = TextStyle(fontSize: 22, fontWeight: FontWeight.w700);
-  static const subtitle = TextStyle(fontSize: 16, fontWeight: FontWeight.w600);
-  static const body = TextStyle(fontSize: 14, fontWeight: FontWeight.w400);
-  static const caption = TextStyle(fontSize: 12, fontWeight: FontWeight.w400);
+  static const displayLarge = MameroomTypography.displayLarge;
+  static const titleLarge = MameroomTypography.titleLarge;
+  static const titleMedium = MameroomTypography.titleMedium;
+  static const bodyLarge = MameroomTypography.bodyLarge;
+  static const bodyMedium = MameroomTypography.bodyMedium;
+  static const button = MameroomTypography.button;
+  static const title = MameroomTypography.titleLarge;
+  static const subtitle = MameroomTypography.bodyLarge;
+  static const body = MameroomTypography.bodyMedium;
+  static const caption = MameroomTypography.caption;
 }

@@ -1,4 +1,4 @@
-﻿import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../shared/supabase/supabase_tables.dart';
 import '../../domain/entities/analysis_progress.dart';
@@ -9,9 +9,9 @@ class AnalysisRemoteDataSource {
     required SupabaseClient client,
     required CoreConceptExtractionDataSource conceptDataSource,
     required FirstQuizGenerationDataSource quizGenerationDataSource,
-  })  : _client = client,
-        _conceptDataSource = conceptDataSource,
-        _quizGenerationDataSource = quizGenerationDataSource;
+  }) : _client = client,
+       _conceptDataSource = conceptDataSource,
+       _quizGenerationDataSource = quizGenerationDataSource;
 
   final SupabaseClient _client;
   final CoreConceptExtractionDataSource _conceptDataSource;
@@ -27,9 +27,12 @@ class AnalysisRemoteDataSource {
     }
 
     try {
-      final material = await _loadMaterial(materialId: materialId, userId: user.id);
+      final material = await _loadMaterial(
+        materialId: materialId,
+        userId: user.id,
+      );
       final currentStatus = MaterialAnalysisStatus.fromValue(
-        material['status'] as String? ?? 'uploaded',
+        material['status'] as String? ?? 'uploading',
       );
 
       if (currentStatus == MaterialAnalysisStatus.completed) {
@@ -45,45 +48,50 @@ class AnalysisRemoteDataSource {
 
       var conceptCount = 0;
       var usedCache = false;
-
-      if (currentStatus == MaterialAnalysisStatus.conceptsCompleted) {
-        conceptCount = await _countConcepts(materialId: materialId);
-      } else {
-        onProgress?.call(AnalysisProgress(
+      onProgress?.call(
+        AnalysisProgress(
           materialId: materialId,
-          status: MaterialAnalysisStatus.extracting,
+          status: MaterialAnalysisStatus.generating,
           progress: 0.25,
           message: 'Requesting server-side text extraction.',
-        ));
-        onProgress?.call(AnalysisProgress(
+        ),
+      );
+      onProgress?.call(
+        AnalysisProgress(
           materialId: materialId,
-          status: MaterialAnalysisStatus.analyzing,
+          status: MaterialAnalysisStatus.generating,
           progress: 0.55,
           message: 'Calling extract-core-concepts Edge Function.',
-        ));
+        ),
+      );
 
-        final result = await _conceptDataSource.extractConcepts(materialId: materialId);
-        conceptCount = result.conceptCount;
-        usedCache = result.usedCache;
+      final result = await _conceptDataSource.extractConcepts(
+        materialId: materialId,
+      );
+      conceptCount = result.conceptCount;
+      usedCache = result.usedCache;
 
-        onProgress?.call(AnalysisProgress(
+      onProgress?.call(
+        AnalysisProgress(
           materialId: materialId,
-          status: MaterialAnalysisStatus.conceptsCompleted,
+          status: MaterialAnalysisStatus.generating,
           progress: 0.72,
           message: 'Core concepts saved on the server.',
           conceptCount: conceptCount,
           usedCache: usedCache,
-        ));
-      }
+        ),
+      );
 
-      onProgress?.call(AnalysisProgress(
-        materialId: materialId,
-        status: MaterialAnalysisStatus.questionsGenerating,
-        progress: 0.86,
-        message: 'Generating your first 10 quiz questions.',
-        conceptCount: conceptCount,
-        usedCache: usedCache,
-      ));
+      onProgress?.call(
+        AnalysisProgress(
+          materialId: materialId,
+          status: MaterialAnalysisStatus.generating,
+          progress: 0.86,
+          message: 'Generating your first 10 quiz questions.',
+          conceptCount: conceptCount,
+          usedCache: usedCache,
+        ),
+      );
 
       final quizResult = await _quizGenerationDataSource.generateFirstQuiz(
         materialId: materialId,
@@ -128,13 +136,19 @@ class AnalysisRemoteDataSource {
     return rows.length;
   }
 
-  Future<void> _safeMarkFailed({required String materialId, required Object error}) async {
+  Future<void> _safeMarkFailed({
+    required String materialId,
+    required Object error,
+  }) async {
     try {
-      await _client.from(SupabaseTables.studyMaterials).update({
-        'status': MaterialAnalysisStatus.failed.value,
-        'analysis_error': error.toString(),
-        'updated_at': DateTime.now().toIso8601String(),
-      }).eq('id', materialId);
+      await _client
+          .from(SupabaseTables.studyMaterials)
+          .update({
+            'status': MaterialAnalysisStatus.failed.value,
+            'analysis_error': error.toString(),
+            'updated_at': DateTime.now().toIso8601String(),
+          })
+          .eq('id', materialId);
     } catch (_) {
       // Preserve the original failure for the caller.
     }

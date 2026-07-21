@@ -6,8 +6,14 @@ class QuizUseCase {
 
   final QuizRepository repository;
 
-  Future<QuizInitialLoad> loadInitialQuestions({required String materialId}) {
-    return repository.loadInitialQuestions(materialId: materialId);
+  Future<QuizInitialLoad> loadInitialQuestions({
+    required String materialId,
+    bool unlearnedOnly = false,
+  }) {
+    return repository.loadInitialQuestions(
+      materialId: materialId,
+      unlearnedOnly: unlearnedOnly,
+    );
   }
 
   Future<MemoryUpdate> saveAttempt({
@@ -41,6 +47,7 @@ class QuizUseCase {
       feedbackType: feedbackType,
     );
   }
+
   Future<void> passLearningItem({
     required String materialId,
     required Question question,

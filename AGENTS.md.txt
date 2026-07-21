@@ -1,0 +1,26 @@
+# Mameroom Flutter UI Rules
+
+## Required Skills
+
+Always use these Flutter skills when editing UI.
+
+- flutter-build-responsive-layout
+- flutter-fix-layout-issues
+- flutter-apply-architecture-best-practices
+
+## Design Rules
+
+- Never redesign the UI.
+- Implement the design board exactly.
+- Preserve spacing, typography, colors, border radius, and card sizes.
+- Do not introduce scrolling unless explicitly requested.
+- Fix Flutter constraints instead of changing the design.
+- Maintain pixel-art visual consistency.
+- Korean text must render correctly without clipping or overflow.
+
+## Layout Rules
+
+- Prefer LayoutBuilder over hardcoded screen sizes.
+- Avoid unnecessary Expanded/Flexible usage.
+- Respect SafeArea.
+- Prevent overflow on all supported screen sizes.

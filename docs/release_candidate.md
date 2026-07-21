@@ -3,7 +3,11 @@
 ## Freeze Scope
 - New feature development is frozen.
 - Included MVP areas: Auth, Library, Upload, Analysis AI1, First Quiz AI2, Quiz, Memory Engine, Review Today, M-Coin, My Room LV1, and Streak.
-- Excluded areas remain frozen: payment, social, ranking, real-time chat, iOS, web, and admin features.
+- Excluded areas remain frozen: Study Plan, payment, social, ranking, real-time chat, iOS, web, and admin features.
+
+## Post-MVP Candidates
+
+- **Study Plan**: Material upload, review, wrong notes, and recent-quiz resume already complete the MVP learning flow. Reconsider this feature only after validating explicit user demand.
 
 ## Code Freeze Cleanup
 - Removed unused dependencies from `pubspec.yaml`: `cupertino_icons`, `equatable`, `fl_chart`.

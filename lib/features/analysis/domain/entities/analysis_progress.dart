@@ -1,11 +1,9 @@
-﻿typedef AnalysisProgressCallback = void Function(AnalysisProgress progress);
+typedef AnalysisProgressCallback = void Function(AnalysisProgress progress);
 
 enum MaterialAnalysisStatus {
-  uploaded('uploaded', 'Uploaded'),
-  extracting('extracting', 'Extracting text'),
-  analyzing('analyzing', 'Extracting core concepts'),
-  conceptsCompleted('concepts_completed', 'Core concepts ready'),
-  questionsGenerating('questions_generating', 'Generating questions'),
+  uploading('uploading', 'Uploading'),
+  parsing('parsing', 'Parsing PDF'),
+  generating('generating', 'Generating'),
   completed('completed', 'Completed'),
   failed('failed', 'Failed');
 
@@ -17,7 +15,7 @@ enum MaterialAnalysisStatus {
   static MaterialAnalysisStatus fromValue(String value) {
     return MaterialAnalysisStatus.values.firstWhere(
       (status) => status.value == value,
-      orElse: () => MaterialAnalysisStatus.uploaded,
+      orElse: () => MaterialAnalysisStatus.uploading,
     );
   }
 }

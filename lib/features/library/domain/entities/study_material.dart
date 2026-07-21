@@ -1,4 +1,4 @@
-﻿class StudyMaterial {
+class StudyMaterial {
   const StudyMaterial({
     required this.id,
     required this.title,
@@ -13,7 +13,9 @@
     this.seedEmoji = '🌱',
     this.recentStudyLabel = '아직 학습 전',
     this.currentStreak = 0,
-    this.status = 'uploaded',
+    this.status = 'uploading',
+    this.uploadedAt,
+    this.lastStudiedAt,
   });
 
   final String id;
@@ -30,6 +32,8 @@
   final String recentStudyLabel;
   final int currentStreak;
   final String status;
+  final DateTime? uploadedAt;
+  final DateTime? lastStudiedAt;
 
   bool get canStartQuiz => status == 'completed';
 }

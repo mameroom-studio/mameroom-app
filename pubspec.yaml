@@ -19,10 +19,14 @@ dependencies:
   crypto: ^3.0.6
   shared_preferences: ^2.5.3
   syncfusion_flutter_pdf: ^33.2.13
+  package_info_plus: ^9.0.1
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  integration_test:
+    sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
@@ -31,3 +35,24 @@ flutter:
     - assets/images/
     - assets/images/pixel/
     - assets/icons/
+
+flutter_launcher_icons:
+  image_path: assets/images/mameroom_icon.png
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: assets/images/mameroom_icon.png
+  adaptive_icon_foreground_inset: 24
+  web:
+    generate: true
+    image_path: assets/images/mameroom_icon.png
+    background_color: "#FFFFFF"
+    theme_color: "#705CFF"
+  windows:
+    generate: true
+    image_path: assets/images/mameroom_icon.png
+    icon_size: 256
+  macos:
+    generate: true
+    image_path: assets/images/mameroom_icon.png

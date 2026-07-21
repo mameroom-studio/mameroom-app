@@ -1,4 +1,4 @@
-﻿class SupabaseTables {
+class SupabaseTables {
   const SupabaseTables._();
 
   static const studyMaterials = 'study_materials';
@@ -17,4 +17,8 @@
   static const userRoomLayouts = 'user_room_layouts';
   static const memorySeeds = 'memory_seeds';
   static const userStreaks = 'user_streaks';
+  static const profiles = 'profiles';
+  static const friendRequests = 'friend_requests';
+  static const friendships = 'friendships';
+  static const userBlocks = 'user_blocks';
 }
